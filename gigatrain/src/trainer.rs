@@ -4,10 +4,17 @@
 //! v0.22.2 — see PARITY.md for the full list of behaviors that must be
 //! preserved, including the ones that look like bugs (stale count residue,
 //! partial position sets, duplicate merges).
+//!
+//! Representation choices that differ from HF without affecting output:
+//! position lists are Vec<u32> instead of HashSet<usize> (deduped on push:
+//! within one merge step words are processed one at a time, so duplicate
+//! inserts for a pair are always adjacent); maps use FxHash. Both only
+//! change iteration order / memory, which the algorithm is insensitive to.
 
+use crate::fxhash::FxHashMap;
 use crate::word::{Pair, Word};
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::BinaryHeap;
 
 pub struct TrainerConfig {
     pub vocab_size: usize,
@@ -42,7 +49,7 @@ impl TrainResult {
     /// The serialized merge list as HF emits it in tokenizer.json:
     /// unique pairs, deduplicated keeping the LAST rank, sorted by rank.
     pub fn serialized_merges(&self) -> Vec<(String, String)> {
-        let mut last_rank: HashMap<Pair, usize> = HashMap::new();
+        let mut last_rank: FxHashMap<Pair, usize> = FxHashMap::default();
         for (rank, (pair, _)) in self.merges.iter().enumerate() {
             last_rank.insert(*pair, rank);
         }
@@ -62,7 +69,7 @@ impl TrainResult {
 struct MergeEntry {
     pair: Pair,
     count: u64,
-    pos: HashSet<u32>,
+    pos: Vec<u32>,
 }
 
 impl PartialEq for MergeEntry {
@@ -87,12 +94,22 @@ impl Ord for MergeEntry {
     }
 }
 
+/// Push word index `i`, skipping if it's already the last element. Within a
+/// merge step words are processed one at a time, so duplicates are always
+/// adjacent and this fully dedups (matching HF's HashSet semantics).
+#[inline]
+fn push_pos(pos: &mut Vec<u32>, i: u32) {
+    if pos.last() != Some(&i) {
+        pos.push(i);
+    }
+}
+
 /// Train BPE over a word-frequency table. `word_counts` order is irrelevant
 /// to the output (it only determines internal word indices).
 pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResult {
     let max_token_length = config.max_token_length.unwrap_or(usize::MAX);
 
-    let mut word_to_id: HashMap<String, u32> = HashMap::with_capacity(config.vocab_size);
+    let mut word_to_id: FxHashMap<String, u32> = FxHashMap::default();
     let mut id_to_word: Vec<String> = Vec::with_capacity(config.vocab_size);
 
     // 1. Special tokens, in order, deduplicated.
@@ -107,7 +124,7 @@ pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResu
     //    usize::MAX; limit_alphabet drops lowest-count chars; kept chars are
     //    ID-ordered by codepoint.
     {
-        let mut alphabet: HashMap<char, usize> = HashMap::new();
+        let mut alphabet: FxHashMap<char, usize> = FxHashMap::default();
         for (word, count) in word_counts {
             for c in word.chars() {
                 *alphabet.entry(c).or_default() += *count as usize;
@@ -140,6 +157,21 @@ pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResu
         }
     }
 
+    // Fast char -> id view of the vocab (valid because we support no
+    // continuing_subword_prefix/end_of_word_suffix, so tokenization only
+    // ever looks up single-char strings; single-char special tokens are
+    // in word_to_id and therefore in this map too).
+    let char_to_id: FxHashMap<char, u32> = word_to_id
+        .iter()
+        .filter_map(|(s, &id)| {
+            let mut chars = s.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => Some((c, id)),
+                _ => None,
+            }
+        })
+        .collect();
+
     // 3. Tokenize words into symbol sequences; chars outside the alphabet
     //    (only possible under limit_alphabet) are dropped.
     let mut words: Vec<Word> = Vec::with_capacity(word_counts.len());
@@ -147,9 +179,8 @@ pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResu
     for (word, count) in word_counts {
         counts.push(*count);
         let mut w = Word::with_capacity(word.chars().count());
-        let mut buf = [0u8; 4];
         for c in word.chars() {
-            if let Some(&id) = word_to_id.get(c.encode_utf8(&mut buf) as &str) {
+            if let Some(&id) = char_to_id.get(&c) {
                 w.add(id);
             }
         }
@@ -157,13 +188,13 @@ pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResu
     }
 
     // 4. Initial pair counts and the inverted index of where each pair lives.
-    let mut pair_counts: HashMap<Pair, i64> = HashMap::new();
-    let mut where_to_update: HashMap<Pair, HashSet<u32>> = HashMap::new();
+    let mut pair_counts: FxHashMap<Pair, i64> = FxHashMap::default();
+    let mut where_to_update: FxHashMap<Pair, Vec<u32>> = FxHashMap::default();
     for (i, word) in words.iter().enumerate() {
         for win in word.symbols.windows(2) {
             let pair = (win[0].c, win[1].c);
             *pair_counts.entry(pair).or_default() += counts[i] as i64;
-            where_to_update.entry(pair).or_default().insert(i as u32);
+            push_pos(where_to_update.entry(pair).or_default(), i as u32);
         }
     }
 
@@ -229,7 +260,7 @@ pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResu
             for &(pair, change) in &changes {
                 *pair_counts.entry(pair).or_default() += change as i64 * counts[i as usize] as i64;
                 if change > 0 {
-                    where_to_update.entry(pair).or_default().insert(i);
+                    push_pos(where_to_update.entry(pair).or_default(), i);
                 }
             }
         }

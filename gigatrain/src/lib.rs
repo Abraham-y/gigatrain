@@ -1,3 +1,4 @@
+pub mod fxhash;
 pub mod trainer;
 pub mod word;
 

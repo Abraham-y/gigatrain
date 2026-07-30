@@ -11,7 +11,7 @@ pub type Pair = (u32, u32);
 pub struct Symbol {
     pub c: u32,
     /// Length in chars (HF counts 1 per char; merged symbols sum).
-    pub len: usize,
+    pub len: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -55,14 +55,14 @@ impl Word {
                 if w > 0 {
                     let prev = syms[w - 1];
                     changes.push(((prev.c, c1), -1));
-                    if prev.len + new_len < max_len {
+                    if (prev.len as usize + new_len as usize) < max_len {
                         changes.push(((prev.c, new_id), 1));
                     }
                 }
                 if k + 2 < n {
                     let right = syms[k + 2];
                     changes.push(((c2, right.c), -1));
-                    if right.len + new_len < max_len {
+                    if (right.len as usize + new_len as usize) < max_len {
                         changes.push(((new_id, right.c), 1));
                     }
                 }
