@@ -8,17 +8,52 @@ vocab 32000, one special token.
 Machine: Apple M-series Mac, 10 cores, 34 GB RAM, macOS 25.5.
 Baseline: `tokenizers` 0.22.2 (Python), rayon across all 10 cores.
 
-## Current results (2026-07-30, after milestone 5)
+## Current results (2026-07-30)
+
+**Whitespace pretokenization**
 
 | corpus | trainer | wall | peak RSS | speedup | parity |
 |---|---|---|---|---|---|
 | 100 MB | gigatrain | 1.7 s | 419 MB | 5.8x | IDENTICAL |
 | 100 MB | HF BpeTrainer | 9.7 s | 1.0 GB | | |
-| 1 GB | gigatrain | 11.1 s | 1.4 GB | 5.5x | IDENTICAL |
+| 1 GB | gigatrain | 9.4 s | 1.3 GB | 6.5x | IDENTICAL |
 | 1 GB | HF BpeTrainer | 61.2 s | 4.7 GB | | |
 
-At 1 GB: phase 1 (read + pretokenize + count) 1.3 s, phase 2 (merge loop)
-9.8 s. 4.14M unique pretokens, 39.3M symbols.
+**ByteLevel (GPT-2 regex) — the production configuration**
+
+| corpus | trainer | wall | peak RSS | speedup | parity |
+|---|---|---|---|---|---|
+| 100 MB | gigatrain | 1.7 s | 224 MB | 11.8x | IDENTICAL |
+| 100 MB | HF BpeTrainer | 61.2 s (incl. pretok) | — | | |
+| 12.9 GB | gigatrain | **104 s** | **2.4 GB** | — | — |
+
+ByteLevel favours gigatrain more than whitespace does: HF pays for a regex
+engine per document, while this is a hand-written state machine. It also
+produces far fewer unique pretokens (1.6M vs 4.1M at 1 GB) because
+punctuation splits, which shrinks phase 2 substantially.
+
+At 12.9 GB / ByteLevel: phase 1 88.9 s, phase 2 14.7 s, 8.96M unique
+pretokens. Whitespace on the same file: 85.7 s total, 6.4 GB peak, 27.4M
+unique pretokens.
+
+### The HF baseline at 12.9 GB
+
+**HuggingFace did not finish.** Killed by a 60-minute watchdog, having spent
+the run between 4 and 8 GB RSS while the machine held 12.5 GB of swap. This
+is the #1681 failure mode (memory, not merge-loop time) on a 34 GB laptop.
+
+It is not a clean speedup number and should not be quoted as one: a
+swap-bound wall time measures this machine's SSD. What it does establish is
+that the same corpus that gigatrain trains in under two minutes inside RAM
+drives HF into an hour of thrashing on identical hardware.
+
+### Measurement noise
+
+Numbers taken after the HF run were affected by 12 GB of swap that macOS had
+not reclaimed: the same 1 GB whitespace configuration measured 9.4 s / 1.3 GB
+on a quiet machine and 11.3–19.4 s / 0.7–0.9 GB while swap was occupied
+(slower wall, and lower RSS because the allocator behaves differently under
+pressure). Treat single measurements on a loaded machine as indicative only.
 
 ## The 13 GB case
 

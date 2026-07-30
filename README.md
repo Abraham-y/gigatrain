@@ -3,9 +3,13 @@
 Fast BPE tokenizer **training** with byte-exact HuggingFace `tokenizers`
 parity.
 
-Trains a 32k vocabulary on **12.9 GB of FineWeb in 86 seconds** using 6.4 GB
+Trains a 32k vocabulary on **12.9 GB of FineWeb in 104 seconds** using 2.4 GB
 of RAM on a 10-core laptop, producing a merge list byte-identical to
-`tokenizers.trainers.BpeTrainer`.
+`tokenizers.trainers.BpeTrainer`. HuggingFace does not finish the same job in
+an hour on the same machine.
+
+Supports both whitespace and **ByteLevel (GPT-2 regex)** pretokenization, the
+latter verified against HF over every non-surrogate BMP codepoint.
 
 Zero dependencies. Rust.
 
@@ -49,11 +53,16 @@ FineWeb sample-10BT, whitespace pretokenization, vocab 32000, one special
 token. Apple M-series, 10 cores, 34 GB RAM. Baseline: `tokenizers` 0.22.2
 using all 10 cores.
 
-| corpus | gigatrain | HF `BpeTrainer` | speedup | merge lists |
-|---|---|---|---|---|
-| 100 MB | 1.7 s / 419 MB | 9.7 s / 1.0 GB | 5.8x | identical |
-| 1 GB | 9.4 s / 1.3 GB | 61.2 s / 4.7 GB | 6.5x | identical |
-| 12.9 GB | 86 s / 6.4 GB | see caveats | — | — |
+| corpus | pretokenizer | gigatrain | HF `BpeTrainer` | speedup | merge lists |
+|---|---|---|---|---|---|
+| 100 MB | whitespace | 1.7 s / 419 MB | 9.7 s / 1.0 GB | 5.8x | identical |
+| 1 GB | whitespace | 9.4 s / 1.3 GB | 61.2 s / 4.7 GB | 6.5x | identical |
+| 100 MB | ByteLevel | 1.7 s / 224 MB | 61.2 s | 11.8x | identical |
+| 12.9 GB | ByteLevel | 104 s / 2.4 GB | did not finish in 60 min | — | — |
+
+At 12.9 GB HuggingFace was killed by a watchdog after an hour, having driven
+the machine to 12.5 GB of swap — the #1681 failure mode. That is a memory
+result, not a clean timing comparison, and is reported as such.
 
 Full methodology, a per-stage memory profile, and the rejected designs are in
 [BENCHMARKS.md](BENCHMARKS.md).

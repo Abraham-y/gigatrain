@@ -27,7 +27,7 @@ fn main() {
         let mut buf = String::new();
         for line in text.split('\n') {
             let mut first = true;
-            let mut emit = |t: &str| {
+            let emit = |t: &str| {
                 if !first {
                     write!(out, "\t").unwrap();
                 }
