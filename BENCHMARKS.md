@@ -47,6 +47,30 @@ swap-bound wall time measures this machine's SSD. What it does establish is
 that the same corpus that gigatrain trains in under two minutes inside RAM
 drives HF into an hour of thrashing on identical hardware.
 
+### Against SentencePiece v0.2.2
+
+SentencePiece shipped a lazy-priority-queue BPE optimization in v0.2.2
+(2026-07-12) with a claimed 20x, so it is the current baseline to beat rather
+than the older published numbers. Measured here, vocab 32000, same machine,
+with `--max_sentence_length` raised from its 4192-byte default (which
+silently drops most FineWeb documents) and `train_extremely_large_corpus`:
+
+| corpus | SentencePiece v0.2.2 | HF 0.22.2 | gigatrain |
+|---|---|---|---|
+| 100 MB | 13.7 s / 539 MB | 9.7 s / 1.0 GB | 1.7 s / 419 MB |
+| 1 GB | 112.7 s / 3.0 GB | 61.2 s / 4.7 GB | 9.4 s / 1.3 GB |
+
+The 20x was against older SentencePiece, not the field: post-optimization it
+is still ~2x slower than HuggingFace at these sizes, and ~12x slower than
+gigatrain. It is more memory-efficient than HF, though not than gigatrain.
+User time barely exceeds wall time (17.2 s vs 14.0 s at 100 MB), consistent
+with its maintainer's statement that BPE training is single-threaded.
+
+This is a speed and memory comparison only. SentencePiece BPE produces a
+different tokenizer by design — normalization, a character-coverage alphabet,
+U+2581 word prefixes, and pieces rather than a merge list — so no
+merge-for-merge diff is possible.
+
 ### Measurement noise
 
 Numbers taken after the HF run were affected by 12 GB of swap that macOS had
@@ -55,24 +79,18 @@ on a quiet machine and 11.3–19.4 s / 0.7–0.9 GB while swap was occupied
 (slower wall, and lower RSS because the allocator behaves differently under
 pressure). Treat single measurements on a loaded machine as indicative only.
 
-## The 13 GB case
+## A retraction: this is not HF issue #1313
 
-**gigatrain trains 12.9 GB of FineWeb in 85.7 s (6.4 GB peak RSS)** on 10
-cores: phase 1 18.1 s, phase 2 67.4 s, 27.4M unique pretokens, 32k vocab.
+An earlier version of this file claimed the 12.9 GB run reproduced
+[tokenizers #1313](https://github.com/huggingface/tokenizers/issues/1313).
+It does not. That issue used `vocab_size=512` on ~13 billion characters of
+unsegmented DNA-like data, so its merge loop runs only a couple of hundred
+merges and the reported 10+ hours came from degenerate pretokenization, not
+merge cost. A 32k-vocab FineWeb run is a different and far merge-heavier
+workload.
 
-**This is not a reproduction of HF issue #1313**, and an earlier version of
-this file wrongly said it was. That issue used `vocab_size=512` on ~13
-billion characters, so its merge loop runs only a couple of hundred merges;
-the reported 10+ hours almost certainly came from degenerate pretokenization
-on unsegmented data, not from merge-loop cost. A 32k-vocab FineWeb run is a
-different and much merge-heavier workload. The honest open issues about
-trainer scale are the memory ones — #1681 (20 GB OOM on 1.5–2 TB machines),
-#1795, #1824 — not #1313.
-
-The HF baseline on the identical file exceeded RAM on this machine and drove
-it into swap (7+ GB RSS against 12.5 GB of swap in use), which is the failure
-mode #1681 describes. Its wall time therefore measures this laptop's SSD as
-much as the trainer, and is reported as such rather than as a clean speedup.
+The genuinely unanswered scale issues are the memory ones: #1681 (20 GB OOM
+on 1.5–2 TB machines), #1795, #1824.
 
 ## Progression (1 GB corpus)
 
