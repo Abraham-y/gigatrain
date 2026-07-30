@@ -1,6 +1,7 @@
 pub mod batch;
 pub mod counter;
 pub mod fxhash;
+pub mod reader;
 pub mod rss;
 pub mod split;
 pub mod trainer;

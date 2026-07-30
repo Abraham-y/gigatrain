@@ -65,6 +65,16 @@ echo "== parity: limit-alphabet =="
 "$PYTHON" scripts/parity_check.py --files "$WORK/war_and_peace.txt" \
   --vocab-size 3000 --limit-alphabet 60
 
+echo "== determinism: output must not depend on thread count =="
+GT=gigatrain/target/release/gigatrain
+$GT --vocab-size 3000 "$WORK/war_and_peace.txt" 2>/dev/null > "$WORK/threads_ref.merges"
+for t in 1 2 3 7 16; do
+  $GT --vocab-size 3000 --threads $t "$WORK/war_and_peace.txt" 2>/dev/null \
+    | cmp -s - "$WORK/threads_ref.merges" \
+    || { echo "FAIL: output differs at --threads $t"; exit 1; }
+done
+echo "  identical across 1,2,3,7,16 threads ($(wc -l < "$WORK/threads_ref.merges") merges)"
+
 echo "== fuzz: 1000 random word tables =="
 "$PYTHON" scripts/parity_fuzz.py --trials 1000 --seed 7
 

@@ -29,10 +29,49 @@ fn die(msg: &str) -> ! {
     std::process::exit(2);
 }
 
-/// Chunk size for the reader. Small enough that in-flight chunks stay a
-/// negligible share of peak RSS (queue depth x this x ~2 for chunks held by
-/// scanners), large enough to amortize the read syscall and boundary scan.
-const CHUNK: usize = 4 << 20;
+/// Phase-1 pipeline sizing, derived from thread count and input size rather
+/// than fixed, so the same binary behaves sensibly from a 1-core container to
+/// a 128-core server and from a 1 MB file to a 100 GB one.
+struct Sizing {
+    /// Bytes per chunk handed to a scanner.
+    chunk: usize,
+    /// Depth of the reader -> scanner queue.
+    chunk_queue: usize,
+    /// Bytes a scanner accumulates for one shard before shipping.
+    batch: usize,
+    /// Number of reader threads (each takes a byte range).
+    readers: usize,
+}
+
+impl Sizing {
+    fn plan(total_bytes: u64, nthreads: usize) -> Self {
+        // Chunks must be small enough that every scanner gets work on a small
+        // corpus, and big enough to amortize syscalls on a large one.
+        let target_chunks = (nthreads * 8).max(1) as u64;
+        let chunk = (total_bytes / target_chunks).clamp(64 << 10, 8 << 20) as usize;
+
+        // Cap bytes in flight rather than fixing the queue depth: depth *
+        // chunk is what actually shows up in RSS.
+        let chunk_queue = ((64 << 20) / chunk).clamp(2, 4 * nthreads.max(1));
+
+        // Each scanner holds one batch per shard, so total batch memory is
+        // O(nthreads^2). Fixing this at 64 KB costs 256 MB at 64 threads and
+        // 1 GB at 128. Give each scanner a fixed budget and split it instead.
+        let batch = ((4 << 20) / nthreads.max(1)).clamp(4 << 10, 64 << 10);
+
+        // One reader saturates at roughly 700 MB/s here, which becomes the
+        // phase-1 bottleneck once enough scanners are consuming. Scale readers
+        // with cores, but keep ranges large enough to stay sequential-ish.
+        let readers = nthreads.clamp(1, 8).min((total_bytes / (64 << 20)).max(1) as usize);
+
+        Sizing {
+            chunk,
+            chunk_queue,
+            batch,
+            readers,
+        }
+    }
+}
 
 /// Stream `paths` as whitespace-bounded chunks and count words in parallel.
 ///
@@ -61,10 +100,24 @@ const CHUNK: usize = 4 << 20;
 /// boundaries (UTF-8 continuation bytes are never ASCII, and every ASCII
 /// whitespace char satisfies char::is_whitespace).
 fn count_words_parallel(paths: &[String], nthreads: usize) -> WordTable {
-    // Ship a batch once it reaches this many bytes of packed words.
-    const BATCH_BYTES: usize = 64 << 10;
+    let total_bytes: u64 = paths
+        .iter()
+        .map(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+        .sum();
+    let sizing = Sizing::plan(total_bytes, nthreads);
+    let batch_bytes = sizing.batch;
+    if gigatrain::rss::enabled() {
+        eprintln!(
+            "sizing: chunk={}KB queue={} batch={}KB readers={} shards={}",
+            sizing.chunk >> 10,
+            sizing.chunk_queue,
+            sizing.batch >> 10,
+            sizing.readers,
+            nthreads,
+        );
+    }
 
-    let (chunk_tx, chunk_rx) = sync_channel::<Arc<Vec<u8>>>(nthreads);
+    let (chunk_tx, chunk_rx) = sync_channel::<Arc<Vec<u8>>>(sizing.chunk_queue);
     let chunk_rx = Arc::new(Mutex::new(chunk_rx));
 
     let mut batch_senders = Vec::with_capacity(nthreads);
@@ -111,7 +164,7 @@ fn count_words_parallel(paths: &[String], nthreads: usize) -> WordTable {
                             // leave each shard's index sparsely populated.
                             let shard = ((h >> 32) % nshards) as usize;
                             batches[shard].push(w, h);
-                            if batches[shard].bytes() >= BATCH_BYTES {
+                            if batches[shard].bytes() >= batch_bytes {
                                 let full = std::mem::take(&mut batches[shard]);
                                 let _ = batch_senders[shard].send(full);
                             }
@@ -127,48 +180,45 @@ fn count_words_parallel(paths: &[String], nthreads: usize) -> WordTable {
             .collect();
         drop(batch_senders);
 
+        // Parallel range readers: one reader saturates well below what the
+        // scanner pool can consume. Ranges are split by byte offset and made
+        // word-safe by reader::read_range's skip/overshoot rule.
         let tx = chunk_tx;
+        let mut jobs: Vec<(String, u64, u64)> = Vec::new();
         for path in paths {
-            let mut file = std::fs::File::open(path)
-                .unwrap_or_else(|e| die(&format!("opening {path}: {e}")));
-            let mut carry: Vec<u8> = Vec::new();
-            loop {
-                let mut buf = std::mem::take(&mut carry);
-                let start = buf.len();
-                buf.resize(start + CHUNK, 0);
-                let mut filled = start;
-                while filled < buf.len() {
-                    match file.read(&mut buf[filled..]) {
-                        Ok(0) => break,
-                        Ok(n) => filled += n,
-                        Err(e) => die(&format!("reading {path}: {e}")),
-                    }
-                }
-                buf.truncate(filled);
-                let eof = filled < start + CHUNK;
-                if eof {
-                    if !buf.is_empty() {
-                        tx.send(Arc::new(buf)).unwrap();
-                    }
-                    break;
-                }
-                // Cut at the last ASCII whitespace; carry the tail over.
-                match buf
-                    .iter()
-                    .rposition(|&b| matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c))
-                {
-                    Some(cut) => {
-                        carry.extend_from_slice(&buf[cut + 1..]);
-                        buf.truncate(cut + 1);
-                        tx.send(Arc::new(buf)).unwrap();
-                    }
-                    None => {
-                        // No boundary in the whole chunk (pathological token):
-                        // keep accumulating.
-                        carry = buf;
-                    }
-                }
+            let len = std::fs::metadata(path)
+                .unwrap_or_else(|e| die(&format!("stat {path}: {e}")))
+                .len();
+            for (start, end) in
+                gigatrain::reader::split_ranges(len, sizing.readers, 64 << 20)
+            {
+                jobs.push((path.clone(), start, end));
             }
+        }
+
+        let next_job = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let jobs = Arc::new(jobs);
+        let readers: Vec<_> = (0..sizing.readers.min(jobs.len().max(1)))
+            .map(|_| {
+                let tx = tx.clone();
+                let jobs = Arc::clone(&jobs);
+                let next_job = Arc::clone(&next_job);
+                let chunk = sizing.chunk;
+                s.spawn(move || loop {
+                    let i = next_job.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((path, start, end)) = jobs.get(i) else {
+                        break;
+                    };
+                    if let Err(e) =
+                        gigatrain::reader::read_range(path, *start, *end, chunk, &tx)
+                    {
+                        die(&e);
+                    }
+                })
+            })
+            .collect();
+        for r in readers {
+            r.join().unwrap();
         }
         drop(tx);
         for scanner in scanners {
