@@ -3,7 +3,7 @@
 Fast BPE tokenizer **training** with byte-exact HuggingFace `tokenizers`
 parity.
 
-Trains a 32k vocabulary on **12.9 GB of FineWeb in 104 seconds** using 2.4 GB
+Trains a 32k vocabulary on **12.9 GB of FineWeb in 85 seconds** using 2.2 GB
 of RAM on a 10-core laptop, producing a merge list byte-identical to
 `tokenizers.trainers.BpeTrainer`. HuggingFace does not finish the same job in
 an hour on the same machine.
@@ -57,8 +57,18 @@ using all 10 cores.
 |---|---|---|---|---|---|
 | 100 MB | whitespace | 1.7 s / 419 MB | 9.7 s / 1.0 GB | 5.8x | identical |
 | 1 GB | whitespace | 9.4 s / 1.3 GB | 61.2 s / 4.7 GB | 6.5x | identical |
-| 100 MB | ByteLevel | 1.7 s / 224 MB | 61.2 s | 11.8x | identical |
-| 12.9 GB | ByteLevel | 104 s / 2.4 GB | did not finish in 60 min | — | — |
+| 100 MB | ByteLevel | 1.2 s / 224 MB | 61.2 s | ~50x | identical |
+| 1 GB | ByteLevel | 8.5 s / 725 MB | — | — | identical |
+| 12.9 GB | ByteLevel | 85 s / 2.2 GB | did not finish in 60 min | — | — |
+
+Against the other trainers, same machine and corpora (speed and memory only —
+neither produces a HuggingFace-compatible merge list, so there is nothing to
+diff):
+
+| corpus | gigatrain | rustbpe | SentencePiece v0.2.2 |
+|---|---|---|---|
+| 100 MB | 1.2 s / 224 MB | 9.9 s / 343 MB | 13.7 s / 539 MB |
+| 1 GB | 8.5 s / 725 MB | 78.9 s / 1.20 GB | 112.7 s / 3.0 GB |
 
 At 12.9 GB HuggingFace was killed by a watchdog after an hour, having driven
 the machine to 12.5 GB of swap — the #1681 failure mode. That is a memory
@@ -158,8 +168,10 @@ version:
 - **SentencePiece got ~20x faster at BPE training in v0.2.2** (July 2026,
   lazy priority queue). Any comparison against an older version is a
   strawman.
-- HuggingFace at 1 GB is around 60 s, not hours. The gap at that size is
+- HuggingFace at 1 GB is around 60 s, not hours — the gap at that size is
   ~6x, not orders of magnitude.
+- **[rustbpe](https://github.com/karpathy/rustbpe) is the closest
+  competitor**: 5–7x slower with comparable memory.
 
 ## License
 
