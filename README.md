@@ -49,8 +49,8 @@ contract.
 
 ## Results
 
-FineWeb sample-10BT, whitespace pretokenization, vocab 32000, one special
-token. Apple M-series, 10 cores, 34 GB RAM. Baseline: `tokenizers` 0.22.2
+FineWeb sample-10BT, vocab 32000, one special token.
+Apple M-series, 10 cores, 34 GB RAM. Baseline: `tokenizers` 0.22.2
 using all 10 cores.
 
 | corpus | pretokenizer | gigatrain | HF `BpeTrainer` | speedup | merge lists |
@@ -77,11 +77,14 @@ must be reproduced.
 
 `scripts/run_parity_ci.sh` is the gate, and no change lands without it:
 
-- five corpus configurations (32k vocab, special tokens including ones that
+- seven corpus configurations (32k vocab, special tokens including ones that
   collide with merge strings, `max_token_length`, `min_frequency`,
-  `limit_alphabet`, English + Chinese)
+  `limit_alphabet`, English + Chinese, and ByteLevel)
+- the ByteLevel pretokenizer diffed against HF over every non-surrogate BMP
+  codepoint in 8 contexts (~508k cases) plus real corpora
 - 1000 randomized fuzz trials biased toward count ties and same-char runs
-- output identical across 1, 2, 3, 7, and 16 threads
+- output identical across 1, 2, 3, 7, and 16 threads, under both
+  pretokenizers
 
 ## Usage
 
@@ -93,10 +96,14 @@ cargo build --release --manifest-path gigatrain/Cargo.toml
 
 # Or from a precomputed word<TAB>count table.
 ./gigatrain/target/release/gigatrain --vocab-size 32000 --words-tsv counts.tsv
+
+# ByteLevel (GPT-2 style), what production tokenizers use.
+./gigatrain/target/release/gigatrain --vocab-size 32000 \
+    --pretokenizer bytelevel corpus.txt
 ```
 
 Options: `--min-frequency`, `--special` (repeatable, order-significant),
-`--max-token-length`, `--limit-alphabet`, `--threads`.
+`--max-token-length`, `--limit-alphabet`, `--threads`, `--pretokenizer`.
 
 `GIGATRAIN_STATS=1` prints stage-boundary RSS, structure sizes, and phase-2
 sub-stage timings.
@@ -134,8 +141,9 @@ expects to be the memory hazard was 1 MB.
   much as the trainer. It is reported for what it is.
 - **Phase 2 is the ceiling.** The merge loop is ~75% of runtime and
   sequential by construction, so more cores do not help it.
-- **Scope.** Whitespace pretokenization only; no
-  `continuing_subword_prefix` / `end_of_word_suffix`; no PyO3 bindings yet.
+- **Scope.** Whitespace and ByteLevel pretokenization; no
+  `continuing_subword_prefix` / `end_of_word_suffix`; no PyO3 bindings yet,
+  so it is a CLI rather than a drop-in `BpeTrainer` replacement.
 
 ## Prior art
 
