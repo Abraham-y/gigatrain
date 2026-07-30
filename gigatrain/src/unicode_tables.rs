@@ -10,6 +10,44 @@
 //! char::is_alphabetic is also not \\p{L} — it includes Nl and
 //! Other_Alphabetic, which the pattern treats differently.
 
+static ASCII_LETTER: [bool; 128] = [
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, true, true, true, true, true, true, true,
+    true, true, true, true, true, true, true, true,
+    true, true, true, true, true, true, true, true,
+    true, true, true, false, false, false, false, false,
+    false, true, true, true, true, true, true, true,
+    true, true, true, true, true, true, true, true,
+    true, true, true, true, true, true, true, true,
+    true, true, true, false, false, false, false, false,
+];
+
+static ASCII_NUMBER: [bool; 128] = [
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    true, true, true, true, true, true, true, true,
+    true, true, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false,
+];
+
 pub static LETTER_RANGES: [(u32, u32); 677] = [
     (0x0041, 0x005A),
     (0x0061, 0x007A),
@@ -856,11 +894,19 @@ fn in_ranges(c: char, ranges: &[(u32, u32)]) -> bool {
 /// True if `c` matches the pattern's `\p{L}` class.
 #[inline]
 pub fn is_letter(c: char) -> bool {
+    let cp = c as u32;
+    if cp < 128 {
+        return ASCII_LETTER[cp as usize];
+    }
     in_ranges(c, &LETTER_RANGES)
 }
 
 /// True if `c` matches the pattern's `\p{N}` class.
 #[inline]
 pub fn is_number(c: char) -> bool {
+    let cp = c as u32;
+    if cp < 128 {
+        return ASCII_NUMBER[cp as usize];
+    }
     in_ranges(c, &NUMBER_RANGES)
 }

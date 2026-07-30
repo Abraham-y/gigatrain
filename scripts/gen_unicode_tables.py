@@ -82,6 +82,16 @@ def main():
     print("//! char::is_alphabetic is also not \\\\p{L} — it includes Nl and")
     print("//! Other_Alphabetic, which the pattern treats differently.")
     print()
+    # ASCII fast path: web text is overwhelmingly ASCII, and a binary search
+    # over ~700 ranges per character dominated phase 1 at scale.
+    for name, cps in (("LETTER", letters), ("NUMBER", numbers)):
+        bits = ["true" if cp in cps else "false" for cp in range(128)]
+        print(f"static ASCII_{name}: [bool; 128] = [")
+        for i in range(0, 128, 8):
+            print("    " + ", ".join(bits[i:i + 8]) + ",")
+        print("];")
+        print()
+
     for name, rs in (("LETTER", lr), ("NUMBER", nr)):
         print(f"pub static {name}_RANGES: [(u32, u32); {len(rs)}] = [")
         for a, b in rs:
@@ -110,12 +120,20 @@ fn in_ranges(c: char, ranges: &[(u32, u32)]) -> bool {
 /// True if `c` matches the pattern's `\\p{L}` class.
 #[inline]
 pub fn is_letter(c: char) -> bool {
+    let cp = c as u32;
+    if cp < 128 {
+        return ASCII_LETTER[cp as usize];
+    }
     in_ranges(c, &LETTER_RANGES)
 }
 
 /// True if `c` matches the pattern's `\\p{N}` class.
 #[inline]
 pub fn is_number(c: char) -> bool {
+    let cp = c as u32;
+    if cp < 128 {
+        return ASCII_NUMBER[cp as usize];
+    }
     in_ranges(c, &NUMBER_RANGES)
 }'''
 

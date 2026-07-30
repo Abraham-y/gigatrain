@@ -104,6 +104,27 @@ derives its alphabet from character coverage, prefixes words with U+2581, and
 emits pieces rather than a merge list. There is no meaningful merge-for-merge
 diff to run against it.
 
+At 12.9 GB SentencePiece was stopped after ~8.5 minutes wall while still
+normalizing the corpus — it had not begun counting pairs, and had pushed the
+machine to 28 GB of swap. That is an incomplete measurement, not a timeout
+result, and is reported as such.
+
+**7. rustbpe is the closest competitor.**
+
+[karpathy/rustbpe](https://github.com/karpathy/rustbpe) is Rust, rayon
+parallel, and uses the GPT-4 split pattern with fancy-regex. Measured on the
+same machine and corpora (`scripts/rustbpe_train_cli.py`, fed line by line):
+
+| corpus | rustbpe | gigatrain (ByteLevel) |
+|---|---|---|
+| 100 MB | 9.9 s / 343 MB | 1.5 s / 278 MB |
+| 1 GB | 78.9 s / 1.20 GB | 14.9 s / 747 MB |
+
+Roughly **5–7x slower with comparable memory** — much closer than
+SentencePiece, and the only competitor whose memory profile resembles
+gigatrain's. It makes no HF-parity claim and uses a different split pattern,
+so again this is speed and memory only.
+
 The same maintainer measured SentencePiece's BPE merge loop as ~76%
 sequential priority-queue maintenance, concluded parallelizing it caps out
 around 1.3x by Amdahl, and wrote that YouTokenToMe-style gains would need
@@ -142,7 +163,7 @@ terminal within its line (`"x\r\n"` is one token, not two).
 | YouTokenToMe | C++ | yes | 1 GB in 25.4 s | 13 GB in <10 min (user report) | no | **archived 2024** |
 | SentencePiece BPE | C++ | yes | **1 GB in 112.7 s / 3.0 GB (v0.2.2, measured here)** | 31.2 GB → 1.8 TB RAM, >24 h | no, by design | v0.2.2, July 2026 |
 | SP `contrib/nlcodec` | C++ | yes | 24x over SP default | few hundred MB | no (99% vocab overlap) | opt-in, not in wheel |
-| `karpathy/rustbpe` | Rust | yes | ~2 B chars, vocab 65k, ~1 min | ~2 GB | no claim | active |
+| `karpathy/rustbpe` | Rust | yes | **1 GB in 78.9 s / 1.20 GB (measured here)** | ~2 GB | no claim | active |
 | tiktoken, rust-gems `bpe`, GPUTOK, BlockBPE | — | **no** | encoding only | — | n/a | — |
 
 ## Honest positioning
@@ -171,6 +192,8 @@ including HuggingFace's own documentation.
 ## Open questions
 
 - Does gigatoken's trainer actually fail at 12.9 GB? (Source inference only.)
-- SentencePiece v0.2.2 is now measured (see #4). `karpathy/rustbpe` is not —
-  it is the remaining unbenchmarked competitor, and the most likely to be
-  close, since it shares HF's data structures in Rust.
+- SentencePiece at 12.9 GB is **not** a completed measurement: it was stopped
+  after ~8.5 minutes wall (~12 min CPU) while still in corpus normalization,
+  having driven the machine to 28 GB of swap. It never reached the merge
+  loop. Worth re-running on a machine with enough RAM to finish.
+- gigatoken's trainer at scale is still unmeasured (source inference only).
