@@ -127,6 +127,43 @@ representation with position-indexed occurrences, replacing the full-word
 rescan per merge; it is a real win on paper but a parity risk, so it belongs
 in its own change with heavy fuzzing.
 
+## Remaining optimization candidates
+
+Phase 1 is now ~83% of the ByteLevel runtime (70.6 s of 85 s at 12.9 GB), so
+that is where the remaining work is. A sampling profile shows scanner and
+owner threads mostly *blocked on their channels* rather than computing, which
+means the pipeline is limited by hand-offs or by I/O, not by the split/hash
+inner loops that were just optimized.
+
+Tried and rejected: retuning the thread pools. Sizing readers/scanners/owners
+each at `nthreads` spawns ~3x the core count, and one measurement suggested
+4 threads beat 10. Under a repeated A/B (4 alternating rounds) the difference
+was 4.94 s vs 4.87 s — inside the noise — and halving the scanner/owner pools
+was clearly worse. Reverted rather than landing complexity for a
+non-effect.
+
+Still untested, roughly by expected payoff:
+
+1. **Zero-copy batching.** Scanners copy each token's bytes into a batch.
+   Since chunks are already `Arc`-shared and outlive their batches, a batch
+   could carry `(offset, len, hash)` into the chunk instead, removing a full
+   pass of copying over the corpus.
+2. **Byte-level piece scanning.** `next_piece_len` decodes UTF-8 chars; an
+   ASCII fast path through raw bytes would avoid decoding for the bulk of web
+   text, in the same spirit as the ASCII class table that gave 1.4x.
+3. **Word-at-a-time scanning.** Processing 8 bytes per step with `u64` bit
+   tricks is portable (no intrinsics, identical on ARM and x86) and typically
+   gives 2-4x on scan-bound loops.
+4. **Allocator choice.** This is an allocation-heavy, memory-bound program and
+   macOS libmalloc is slow to return freed pages; a mimalloc/jemalloc feature
+   flag may change peak RSS materially, especially on Linux.
+
+**Measuring these needs a quiet machine.** After the HF and SentencePiece runs
+left 14-28 GB of swap occupied, repeated runs of an identical configuration
+varied by up to 2x — larger than the effects being chased. The two wins above
+were only trustworthy because they were A/B'd with alternating rounds and had
+effect sizes (1.4x, 1.7x) well clear of that noise.
+
 ## Where the memory actually went
 
 Profiled with `GIGATRAIN_STATS=1` (stage RSS + structure sizes). The
