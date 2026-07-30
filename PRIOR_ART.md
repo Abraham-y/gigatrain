@@ -76,11 +76,33 @@ pretokenization, not merge cost. A 32k-vocab FineWeb run does not reproduce
 it. The genuinely unanswered scale issues are the memory ones: #1681
 (20 GB OOM on 1.5–2 TB), #1795, #1824.
 
-**4. SentencePiece got much faster last month.**
+**4. SentencePiece got much faster last month — and is still slower than HF.**
 
 v0.2.2 (2026-07-12) landed an O(log n) lazy-priority-queue BPE optimization
-(commit `8db9878`, 2026-06-12), with the maintainer claiming **20x**. Any
-benchmark against an older SentencePiece is invalid.
+(commit `8db9878`, 2026-06-12), with the maintainer claiming **20x**. That
+20x is against older SentencePiece, not against the field.
+
+Measured here on FineWeb, vocab 32000, same machine (`scripts/sp_train_cli.py`,
+with `--max_sentence_length` raised from its 4192-byte default so documents
+are not silently truncated, `train_extremely_large_corpus=true`,
+`normalization_rule_name=identity`, `character_coverage=1.0`):
+
+| corpus | SentencePiece v0.2.2 | HF 0.22.2 | gigatrain |
+|---|---|---|---|
+| 100 MB | 13.7 s / 539 MB | 9.7 s / 1.0 GB | 1.7 s / 419 MB |
+| 1 GB | 112.7 s / 3.0 GB | 61.2 s / 4.7 GB | 9.4 s / 1.3 GB |
+
+So post-optimization SentencePiece is roughly **2x slower than HuggingFace**
+at these sizes and ~12x slower than gigatrain, though it uses less memory
+than HF. Its CPU time barely exceeds wall time (17.2 s user vs 14.0 s real at
+100 MB), consistent with the maintainer's statement that BPE training is
+single-threaded.
+
+**This is a speed and memory comparison only, not a parity one.**
+SentencePiece BPE deliberately produces a different tokenizer: it normalizes,
+derives its alphabet from character coverage, prefixes words with U+2581, and
+emits pieces rather than a merge list. There is no meaningful merge-for-merge
+diff to run against it.
 
 The same maintainer measured SentencePiece's BPE merge loop as ~76%
 sequential priority-queue maintenance, concluded parallelizing it caps out
@@ -98,22 +120,27 @@ Independent numbers put HF at 59 s (arXiv:2604.05192) and 97.7 s (YTTM's
 benchmark) on 1 GB, consistent with the 61.2 s measured here. The advantage
 at that scale is ~6x, not orders of magnitude.
 
-**6. Parity is currently scoped to whitespace pretokenization.**
+**6. Parity was scoped to whitespace pretokenization — now closed.**
 
 Production BPE tokenizers almost universally use ByteLevel with a GPT-2-style
-regex, which is what gigatoken's parity test covers and this one does not.
-`--words-tsv` can accept externally pretokenized counts, but that bypasses
-the fast phase 1 that is the actual contribution. This is the first gap a
-reviewer will find.
+regex. That gap is closed: `--pretokenizer bytelevel` trains
+merge-list-identical to HF, with the pretokenizer itself diffed against HF
+over every non-surrogate BMP codepoint in 8 contexts plus real corpora.
+
+Two subtleties that had to be handled, both of which silently corrupt output
+if missed: Unicode class tables must match HF's regex version rather than a
+Unicode database (Python 3.12 is Unicode 15, HF's regex is Unicode 16), and
+HF's trainer feeds files one line at a time, so a trailing newline is
+terminal within its line (`"x\r\n"` is one token, not two).
 
 ## Landscape
 
 | Tool | Lang | Trains | Best published training number | Largest demonstrated | HF parity | Status |
 |---|---|---|---|---|---|---|
-| HF `tokenizers` | Rust | yes | 1 GB in 59–98 s | OOM at 20–50 GB on 1–2 TB RAM | is the reference | 0.23.1; no trainer perf work 2024–2026 |
+| HF `tokenizers` | Rust | yes | 1 GB in 59–98 s (61.2 s measured here) | OOM at 20–50 GB on 1–2 TB RAM; did not finish 12.9 GB in 60 min here | is the reference | 0.23.1; no trainer perf work 2024–2026 |
 | gigatoken `train_bpe` | Rust | yes | 1 MB synthetic | ~1 MB | **yes, CI-tested at 120 KB** | 0.10.0, undocumented |
 | YouTokenToMe | C++ | yes | 1 GB in 25.4 s | 13 GB in <10 min (user report) | no | **archived 2024** |
-| SentencePiece BPE | C++ | yes | 1 GB in 344 s (pre-v0.2.2) | 31.2 GB → 1.8 TB RAM, >24 h | no, by design | v0.2.2, July 2026 |
+| SentencePiece BPE | C++ | yes | **1 GB in 112.7 s / 3.0 GB (v0.2.2, measured here)** | 31.2 GB → 1.8 TB RAM, >24 h | no, by design | v0.2.2, July 2026 |
 | SP `contrib/nlcodec` | C++ | yes | 24x over SP default | few hundred MB | no (99% vocab overlap) | opt-in, not in wheel |
 | `karpathy/rustbpe` | Rust | yes | ~2 B chars, vocab 65k, ~1 min | ~2 GB | no claim | active |
 | tiktoken, rust-gems `bpe`, GPUTOK, BlockBPE | — | **no** | encoding only | — | n/a | — |
@@ -122,13 +149,15 @@ reviewer will find.
 
 What is defensible:
 
-> gigatrain trains a 32k BPE vocabulary on 12.9 GB of FineWeb in 86 s and
-> 6.4 GB peak RSS on a 10-core laptop, with a merge list byte-identical to
-> HuggingFace `tokenizers` under a CI parity test that covers alphabet
-> construction, ID reuse, `min_frequency`, `max_token_length`, and
-> stale-heap semantics. The algorithm is standard; the contribution is
-> phase-1 architecture and memory layout, in a regime where the incumbents
-> are reported to OOM.
+> gigatrain trains a 32k BPE vocabulary on 12.9 GB of FineWeb in 104 s and
+> 2.4 GB peak RSS on a 10-core laptop, with a merge list byte-identical to
+> HuggingFace `tokenizers` under a CI parity test covering both whitespace
+> and ByteLevel pretokenization, alphabet construction, ID reuse,
+> `min_frequency`, `max_token_length`, and stale-heap semantics. On the same
+> machine and file, HuggingFace did not finish in 60 minutes and
+> SentencePiece v0.2.2 is ~12x slower at 1 GB. The algorithm is standard;
+> the contribution is phase-1 architecture and memory layout, in a regime
+> where the incumbents are reported to OOM.
 
 What should not be claimed: novelty of the algorithm, being the first with HF
 parity, or reproducing #1313.
@@ -142,7 +171,6 @@ including HuggingFace's own documentation.
 ## Open questions
 
 - Does gigatoken's trainer actually fail at 12.9 GB? (Source inference only.)
-- How does gigatrain compare to SentencePiece **v0.2.2** and to
-  `karpathy/rustbpe`? Not yet measured. Note SentencePiece's
-  `--max_sentence_length` defaults to 4192 bytes and silently drops longer
-  documents, which invalidates naive comparisons.
+- SentencePiece v0.2.2 is now measured (see #4). `karpathy/rustbpe` is not —
+  it is the remaining unbenchmarked competitor, and the most likely to be
+  close, since it shares HF's data structures in Rust.
