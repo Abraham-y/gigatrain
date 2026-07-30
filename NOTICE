@@ -1,0 +1,19 @@
+gigatrain
+Copyright 2026 Abraham Yeung
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product reimplements the training semantics of HuggingFace `tokenizers`
+(https://github.com/huggingface/tokenizers, Apache License 2.0) in order to
+produce byte-identical merge lists. No source code was copied, but the
+following are derived from that project and are used under Apache-2.0:
+
+- Test vectors in `gigatrain/src/trainer.rs` and `gigatrain/src/word.rs`,
+  ported from `tokenizers/src/models/bpe/trainer.rs` and
+  `tokenizers/src/models/bpe/word.rs` (tests `test_train`,
+  `bpe_test_max_token_length_direct_assert`, `test_merge`,
+  `test_merge_max_length`).
+- The behavioral specification documented in PARITY.md, determined by reading
+  that project's source at tag v0.22.2.
+
+Apache-2.0 was chosen for compatibility with the above.

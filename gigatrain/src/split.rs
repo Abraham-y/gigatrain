@@ -133,7 +133,9 @@ mod tests {
     #[test]
     fn all_lead_byte_chars_agree_with_std() {
         for cp in 0u32..0x1_0000 {
-            let Some(c) = char::from_u32(cp) else { continue };
+            let Some(c) = char::from_u32(cp) else {
+                continue;
+            };
             let mut buf = [0u8; 4];
             let s = c.encode_utf8(&mut buf);
             let text = format!("a{s}b");

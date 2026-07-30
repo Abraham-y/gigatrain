@@ -8,6 +8,6 @@ pub mod trainer;
 pub mod word;
 pub mod wordtable;
 
-pub use trainer::{train, TrainResult, TrainerConfig};
 pub use counter::WordCounter;
+pub use trainer::{train, TrainResult, TrainerConfig};
 pub use wordtable::WordTable;

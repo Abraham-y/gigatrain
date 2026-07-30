@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Unit tests across OS and architecture. These cover the merge semantics,
+  # the whitespace splitter's equivalence to str::split_whitespace over every
+  # BMP codepoint, and the range reader's invariance to how input is split.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --release --manifest-path gigatrain/Cargo.toml
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path gigatrain/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path gigatrain/Cargo.toml --all-targets -- -D warnings
+
+  # The milestone-2 gate: byte-exact merge-list parity with HuggingFace
+  # tokenizers across corpus configurations, plus fuzzing and a check that
+  # output does not depend on thread count. Runs on Linux/glibc, so it also
+  # confirms the results are not specific to the macOS allocator.
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install tokenizers==0.22.2
+      - run: bash scripts/run_parity_ci.sh

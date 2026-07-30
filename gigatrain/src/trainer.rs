@@ -12,6 +12,10 @@
 //! use FxHash. These change memory layout and iteration order only, which the
 //! algorithm is insensitive to.
 
+// The vocab build mirrors HF's contains_key-then-insert control flow so the
+// two are easy to diff against each other; entry() would obscure that.
+#![allow(clippy::map_entry)]
+
 use crate::fxhash::FxHashMap;
 use crate::word::{Pair, WordArena};
 use crate::wordtable::WordTable;
@@ -210,17 +214,19 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
     // 4. Initial pair counts and the inverted index of where each pair lives.
     let mut pair_counts: FxHashMap<Pair, i64> = FxHashMap::default();
     let mut where_to_update: FxHashMap<Pair, Vec<u32>> = FxHashMap::default();
-    for i in 0..words.len() {
+    for (i, &count) in counts.iter().enumerate() {
         for win in words.symbols_of(i).windows(2) {
             let pair = (win[0], win[1]);
-            *pair_counts.entry(pair).or_default() += counts[i] as i64;
+            *pair_counts.entry(pair).or_default() += count as i64;
             push_pos(where_to_update.entry(pair).or_default(), i as u32);
         }
     }
 
     lap("initial pair count");
     if std::env::var_os("GIGATRAIN_STATS").is_some() {
-        let symbols = (0..words.len()).map(|i| words.symbols_of(i).len()).sum::<usize>();
+        let symbols = (0..words.len())
+            .map(|i| words.symbols_of(i).len())
+            .sum::<usize>();
         let pos_entries: usize = where_to_update.values().map(|v| v.len()).sum();
         let pos_cap: usize = where_to_update.values().map(|v| v.capacity()).sum();
         eprintln!(

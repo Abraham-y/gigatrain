@@ -2,7 +2,12 @@
 name = "gigatrain"
 version = "0.1.0"
 edition = "2021"
-description = "Fast BPE tokenizer trainer with byte-exact HuggingFace parity"
+rust-version = "1.82"
+description = "Fast BPE tokenizer trainer with byte-exact HuggingFace tokenizers parity"
+license = "Apache-2.0"
+readme = "../README.md"
+keywords = ["bpe", "tokenizer", "nlp", "training", "tokenization"]
+categories = ["text-processing", "science"]
 
 [dependencies]
 

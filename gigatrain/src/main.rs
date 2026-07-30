@@ -19,7 +19,7 @@
 
 use gigatrain::batch::WordBatch;
 use gigatrain::{train, TrainerConfig, WordCounter, WordTable};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -62,7 +62,9 @@ impl Sizing {
         // One reader saturates at roughly 700 MB/s here, which becomes the
         // phase-1 bottleneck once enough scanners are consuming. Scale readers
         // with cores, but keep ranges large enough to stay sequential-ish.
-        let readers = nthreads.clamp(1, 8).min((total_bytes / (64 << 20)).max(1) as usize);
+        let readers = nthreads
+            .clamp(1, 8)
+            .min((total_bytes / (64 << 20)).max(1) as usize);
 
         Sizing {
             chunk,
@@ -189,9 +191,7 @@ fn count_words_parallel(paths: &[String], nthreads: usize) -> WordTable {
             let len = std::fs::metadata(path)
                 .unwrap_or_else(|e| die(&format!("stat {path}: {e}")))
                 .len();
-            for (start, end) in
-                gigatrain::reader::split_ranges(len, sizing.readers, 64 << 20)
-            {
+            for (start, end) in gigatrain::reader::split_ranges(len, sizing.readers, 64 << 20) {
                 jobs.push((path.clone(), start, end));
             }
         }
@@ -209,9 +209,7 @@ fn count_words_parallel(paths: &[String], nthreads: usize) -> WordTable {
                     let Some((path, start, end)) = jobs.get(i) else {
                         break;
                     };
-                    if let Err(e) =
-                        gigatrain::reader::read_range(path, *start, *end, chunk, &tx)
-                    {
+                    if let Err(e) = gigatrain::reader::read_range(path, *start, *end, chunk, &tx) {
                         die(&e);
                     }
                 })
@@ -282,8 +280,8 @@ fn main() {
 
     let t0 = Instant::now();
     let word_table: WordTable = if let Some(path) = &words_tsv {
-        let data = std::fs::read_to_string(path)
-            .unwrap_or_else(|e| die(&format!("reading {path}: {e}")));
+        let data =
+            std::fs::read_to_string(path).unwrap_or_else(|e| die(&format!("reading {path}: {e}")));
         let mut acc = WordCounter::new();
         for line in data.lines() {
             if line.is_empty() {

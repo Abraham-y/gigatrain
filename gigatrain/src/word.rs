@@ -41,7 +41,10 @@ impl WordArena {
     /// Append a word built from `ids` (chars already mapped to vocab IDs).
     pub fn push_word(&mut self, ids: impl Iterator<Item = u32>) {
         let start = self.symbols.len();
-        assert!(start <= u32::MAX as usize, "symbol arena exceeds 4G symbols");
+        assert!(
+            start <= u32::MAX as usize,
+            "symbol arena exceeds 4G symbols"
+        );
         self.symbols.extend(ids);
         self.starts.push(start as u32);
         self.lens.push((self.symbols.len() - start) as u32);
@@ -71,6 +74,9 @@ impl WordArena {
     /// Parity notes (PARITY.md): the merged pair itself is never decremented;
     /// the left neighbor is read post-merge (may be a symbol produced earlier
     /// in this same pass); the `max_len` guard is strict `<`.
+    // The parameter list mirrors the merge's actual inputs; bundling them
+    // into a struct would only move the same data behind another name.
+    #[allow(clippy::too_many_arguments)]
     pub fn merge(
         &mut self,
         i: usize,

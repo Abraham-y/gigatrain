@@ -41,7 +41,11 @@ pub fn split_ranges(total: u64, n: usize, min_range: u64) -> Vec<(u64, u64)> {
     (0..count)
         .map(|i| {
             let start = i * step;
-            let end = if i + 1 == count { total } else { (i + 1) * step };
+            let end = if i + 1 == count {
+                total
+            } else {
+                (i + 1) * step
+            };
             (start, end)
         })
         .collect()
@@ -78,8 +82,6 @@ pub fn read_range(
             .map_err(|e| format!("seeking {path}: {e}"))?;
     }
 
-    // Absolute offset of the next byte to be read from the file.
-    let mut abs = start;
     let mut buf: Vec<u8> = Vec::new();
     // Absolute offset of buf[0]. Outside the skip phase, buf[0] is always the
     // first byte of a word.
@@ -99,7 +101,6 @@ pub fn read_range(
             .take(chunk as u64)
             .read_to_end(&mut buf)
             .map_err(|e| format!("reading {path}: {e}"))?;
-        abs += n as u64;
         let eof = n < chunk;
 
         if skipping {
@@ -243,7 +244,7 @@ mod tests {
             // A word longer than several ranges/chunks.
             {
                 let mut v = b"short ".to_vec();
-                v.extend(std::iter::repeat(b'x').take(500));
+                v.extend(std::iter::repeat_n(b'x', 500));
                 v.extend(b" tail");
                 v
             },
