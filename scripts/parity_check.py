@@ -22,7 +22,11 @@ GIGATRAIN = ROOT / "gigatrain" / "target" / "release" / "gigatrain"
 
 def hf_train(files, args):
     tok = Tokenizer(models.BPE())
-    tok.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
+    if args.pretokenizer == "bytelevel":
+        tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False,
+                                                     use_regex=True)
+    else:
+        tok.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
     kwargs = dict(
         vocab_size=args.vocab_size,
         min_frequency=args.min_frequency,
@@ -54,6 +58,8 @@ def gigatrain_train(files, args):
         cmd += ["--max-token-length", str(args.max_token_length)]
     if args.limit_alphabet is not None:
         cmd += ["--limit-alphabet", str(args.limit_alphabet)]
+    if args.pretokenizer == "bytelevel":
+        cmd += ["--pretokenizer", "bytelevel"]
     cmd += files
     t0 = time.perf_counter()
     proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -75,6 +81,8 @@ def main():
     p.add_argument("--special", action="append", default=[])
     p.add_argument("--max-token-length", type=int, default=None)
     p.add_argument("--limit-alphabet", type=int, default=None)
+    p.add_argument("--pretokenizer", choices=["whitespace", "bytelevel"],
+                   default="whitespace")
     args = p.parse_args()
 
     print(f"HF tokenizers training (vocab={args.vocab_size})...", file=sys.stderr)

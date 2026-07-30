@@ -65,6 +65,17 @@ echo "== parity: limit-alphabet =="
 "$PYTHON" scripts/parity_check.py --files "$WORK/war_and_peace.txt" \
   --vocab-size 3000 --limit-alphabet 60
 
+echo "== parity: ByteLevel (GPT-2 regex), the production configuration =="
+"$PYTHON" scripts/parity_check.py --files "$WORK/war_and_peace.txt" \
+  --vocab-size 5000 --pretokenizer bytelevel
+
+echo "== parity: ByteLevel multilingual (en+zh) =="
+"$PYTHON" scripts/parity_check.py --files "$WORK/war_and_peace.txt" "$WORK/hongloumeng.txt" \
+  --vocab-size 8000 --pretokenizer bytelevel
+
+echo "== ByteLevel pretokenizer differential vs HF (BMP sweep + corpora) =="
+"$PYTHON" scripts/check_bytelevel_parity.py "$WORK/war_and_peace.txt"
+
 echo "== determinism: output must not depend on thread count =="
 GT=gigatrain/target/release/gigatrain
 $GT --vocab-size 3000 "$WORK/war_and_peace.txt" 2>/dev/null > "$WORK/threads_ref.merges"
@@ -72,6 +83,13 @@ for t in 1 2 3 7 16; do
   $GT --vocab-size 3000 --threads $t "$WORK/war_and_peace.txt" 2>/dev/null \
     | cmp -s - "$WORK/threads_ref.merges" \
     || { echo "FAIL: output differs at --threads $t"; exit 1; }
+done
+$GT --vocab-size 3000 --pretokenizer bytelevel "$WORK/war_and_peace.txt" 2>/dev/null \
+  > "$WORK/threads_bl_ref.merges"
+for t in 1 2 3 7 16; do
+  $GT --vocab-size 3000 --pretokenizer bytelevel --threads $t "$WORK/war_and_peace.txt" \
+    2>/dev/null | cmp -s - "$WORK/threads_bl_ref.merges" \
+    || { echo "FAIL: bytelevel output differs at --threads $t"; exit 1; }
 done
 echo "  identical across 1,2,3,7,16 threads ($(wc -l < "$WORK/threads_ref.merges") merges)"
 

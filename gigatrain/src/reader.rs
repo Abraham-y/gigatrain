@@ -51,7 +51,31 @@ pub fn split_ranges(total: u64, n: usize, min_range: u64) -> Vec<(u64, u64)> {
         .collect()
 }
 
-/// Read `[start, end)` of `path`, sending whitespace-terminated chunks.
+/// Where a chunk may be cut so that pretokenization is unaffected.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CutRule {
+    /// Whitespace is a discarded delimiter, so a chunk may end just *after*
+    /// any whitespace byte.
+    AfterWhitespace,
+    /// Whitespace is content (ByteLevel maps it to `Ġ`, `Ċ`, ...) and HF's
+    /// trainer pretokenizes a file one line at a time, so a line's trailing
+    /// newline is terminal within that line. Chunks must therefore hold whole
+    /// lines: cut immediately after a `\n`.
+    AfterNewline,
+}
+
+/// Is `i` a legal cut point in `buf` under `rule`? Both rules cut just after
+/// the matched byte, so a chunk always ends on a boundary the pretokenizer
+/// would have produced anyway.
+#[inline]
+fn is_cut_point(b: u8, rule: CutRule) -> bool {
+    match rule {
+        CutRule::AfterWhitespace => is_ws(b),
+        CutRule::AfterNewline => b == b'\n',
+    }
+}
+
+/// Read `[start, end)` of `path`, sending chunks cut per `rule`.
 ///
 /// Returns Err with a message on I/O failure.
 pub fn read_range(
@@ -59,6 +83,7 @@ pub fn read_range(
     start: u64,
     end: u64,
     chunk: usize,
+    rule: CutRule,
     tx: &SyncSender<Arc<Vec<u8>>>,
 ) -> Result<(), String> {
     let mut file = File::open(path).map_err(|e| format!("opening {path}: {e}"))?;
@@ -73,7 +98,10 @@ pub fn read_range(
             .map_err(|e| format!("seeking {path}: {e}"))?;
         let mut prev = [0u8; 1];
         match file.read(&mut prev) {
-            Ok(1) => skipping = !is_ws(prev[0]),
+            // A range opens cleanly when the byte before it was itself a cut
+            // point; otherwise we are mid-word (or mid-line) and that piece
+            // belongs to the previous range.
+            Ok(1) => skipping = !is_cut_point(prev[0], rule),
             Ok(_) => return Ok(()), // start is at/past EOF
             Err(e) => return Err(format!("reading {path}: {e}")),
         }
@@ -104,7 +132,7 @@ pub fn read_range(
         let eof = n < chunk;
 
         if skipping {
-            match buf.iter().position(|&b| is_ws(b)) {
+            match buf.iter().position(|&b| is_cut_point(b, rule)) {
                 Some(p) => {
                     buf.drain(..=p);
                     buf_start += (p + 1) as u64;
@@ -132,12 +160,15 @@ pub fn read_range(
             // We hold bytes past `end`: finish the word that started before
             // `end` and stop, so the next range does not double-count it.
             //
-            // Cut at the first whitespace at absolute offset >= end-1, not
-            // >= end. If a whitespace sits exactly at end-1, a fresh word
-            // starts at `end` and is the next range's; cutting from `end`
-            // would swallow it here and count it twice.
+            // Cut at the earliest point whose *next* token starts at or past
+            // `end`, so that token goes to the next range and is not counted
+            // twice. Cutting at index i leaves the next token starting at
+            // absolute `buf_start + keep_len(i)`, so the threshold depends on
+            // the rule: AfterWhitespace consumes the delimiter (next token at
+            // i+1), BeforeWhitespaceRun leaves the run in place (next token
+            // at i).
             let jmin = (end - 1).saturating_sub(buf_start) as usize;
-            match buf[jmin..].iter().position(|&b| is_ws(b)) {
+            match buf[jmin..].iter().position(|&b| is_cut_point(b, rule)) {
                 Some(rel) => {
                     let cut = jmin + rel;
                     buf.truncate(cut + 1);
@@ -164,7 +195,7 @@ pub fn read_range(
         }
 
         // Normal case: cut at the last whitespace, carry the tail forward.
-        match buf.iter().rposition(|&b| is_ws(b)) {
+        match buf.iter().rposition(|&b| is_cut_point(b, rule)) {
             Some(cut) => {
                 let tail = buf.split_off(cut + 1);
                 buf_start += buf.len() as u64;
@@ -172,8 +203,8 @@ pub fn read_range(
                 buf = tail;
             }
             None => {
-                // No boundary in the whole buffer (pathological token): keep
-                // accumulating.
+                // No boundary in the whole buffer (a pathological token, or a
+                // line longer than the chunk): keep accumulating.
             }
         }
     }
@@ -186,12 +217,18 @@ mod tests {
     use std::io::Write;
     use std::sync::mpsc::sync_channel;
 
-    fn count_via_ranges(data: &[u8], nranges: usize, chunk: usize) -> HashMap<String, u64> {
+    fn count_via_ranges(
+        data: &[u8],
+        nranges: usize,
+        chunk: usize,
+        rule: CutRule,
+    ) -> HashMap<String, u64> {
         let dir = std::env::temp_dir().join(format!(
-            "gigatrain_reader_test_{}_{}_{}",
+            "gigatrain_reader_test_{}_{}_{}_{:?}",
             data.len(),
             nranges,
-            chunk
+            chunk,
+            rule
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("input.txt");
@@ -203,26 +240,53 @@ mod tests {
         std::thread::scope(|s| {
             let collector = s.spawn(move || {
                 let mut counts: HashMap<String, u64> = HashMap::new();
+                let table = crate::bytelevel::byte_to_char();
+                let mut buf = String::new();
                 while let Ok(c) = rx.recv() {
                     let text = std::str::from_utf8(&c).unwrap();
-                    for w in text.split_whitespace() {
-                        *counts.entry(w.to_string()).or_default() += 1;
+                    match rule {
+                        CutRule::AfterWhitespace => {
+                            for w in text.split_whitespace() {
+                                *counts.entry(w.to_string()).or_default() += 1;
+                            }
+                        }
+                        CutRule::AfterNewline => {
+                            for line in text.split_inclusive('\n') {
+                                crate::bytelevel::for_each_token(line, &table, &mut buf, |t| {
+                                    *counts.entry(t.to_string()).or_default() += 1;
+                                });
+                            }
+                        }
                     }
                 }
                 counts
             });
             for (start, end) in ranges {
-                read_range(&path_str, start, end, chunk, &tx).unwrap();
+                read_range(&path_str, start, end, chunk, rule, &tx).unwrap();
             }
             drop(tx);
             collector.join().unwrap()
         })
     }
 
-    fn expected(data: &[u8]) -> HashMap<String, u64> {
+    fn expected(data: &[u8], rule: CutRule) -> HashMap<String, u64> {
         let mut counts: HashMap<String, u64> = HashMap::new();
-        for w in std::str::from_utf8(data).unwrap().split_whitespace() {
-            *counts.entry(w.to_string()).or_default() += 1;
+        let text = std::str::from_utf8(data).unwrap();
+        match rule {
+            CutRule::AfterWhitespace => {
+                for w in text.split_whitespace() {
+                    *counts.entry(w.to_string()).or_default() += 1;
+                }
+            }
+            CutRule::AfterNewline => {
+                let table = crate::bytelevel::byte_to_char();
+                let mut buf = String::new();
+                for line in text.split_inclusive('\n') {
+                    crate::bytelevel::for_each_token(line, &table, &mut buf, |t| {
+                        *counts.entry(t.to_string()).or_default() += 1;
+                    });
+                }
+            }
         }
         counts
     }
@@ -254,17 +318,19 @@ mod tests {
                 .collect(),
         ];
 
-        for data in corpora {
-            let want = expected(&data);
-            for nranges in [1, 2, 3, 5, 8, 17] {
-                for chunk in [1, 2, 3, 7, 16, 64, 4096] {
-                    let got = count_via_ranges(&data, nranges, chunk);
-                    assert_eq!(
-                        got,
-                        want,
-                        "mismatch: len={} nranges={nranges} chunk={chunk}",
-                        data.len()
-                    );
+        for rule in [CutRule::AfterWhitespace, CutRule::AfterNewline] {
+            for data in &corpora {
+                let want = expected(data, rule);
+                for nranges in [1, 2, 3, 5, 8, 17] {
+                    for chunk in [1, 2, 3, 7, 16, 64, 4096] {
+                        let got = count_via_ranges(data, nranges, chunk, rule);
+                        assert_eq!(
+                            got,
+                            want,
+                            "mismatch: len={} nranges={nranges} chunk={chunk} rule={rule:?}",
+                            data.len()
+                        );
+                    }
                 }
             }
         }

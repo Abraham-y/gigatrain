@@ -11,6 +11,7 @@
 //!   --max-token-length N
 //!   --limit-alphabet N
 //!   --threads N             (default: all cores)
+//!   --pretokenizer MODE     whitespace (default) or bytelevel
 //!   --words-tsv FILE        word<TAB>count table instead of raw text
 //!
 //! Raw text mode pretokenizes with whitespace splitting, byte-for-byte
@@ -101,12 +102,20 @@ impl Sizing {
 /// Chunks are cut at ASCII whitespace bytes, which are always real word
 /// boundaries (UTF-8 continuation bytes are never ASCII, and every ASCII
 /// whitespace char satisfies char::is_whitespace).
-fn count_words_parallel(paths: &[String], nthreads: usize) -> WordTable {
+fn count_words_parallel(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTable {
     let total_bytes: u64 = paths
         .iter()
         .map(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
         .sum();
     let sizing = Sizing::plan(total_bytes, nthreads);
+    // HF's trainer pretokenizes files one line at a time, and under ByteLevel
+    // a line's trailing newline is content that belongs to that line. Chunks
+    // must therefore hold whole lines (see reader::CutRule).
+    let cut_rule = if bytelevel {
+        gigatrain::reader::CutRule::AfterNewline
+    } else {
+        gigatrain::reader::CutRule::AfterWhitespace
+    };
     let batch_bytes = sizing.batch;
     if gigatrain::rss::enabled() {
         eprintln!(
@@ -154,23 +163,40 @@ fn count_words_parallel(paths: &[String], nthreads: usize) -> WordTable {
                     let nshards = nthreads as u64;
                     let mut batches: Vec<WordBatch> =
                         (0..nthreads).map(|_| WordBatch::new()).collect();
+                    let table = gigatrain::bytelevel::byte_to_char();
+                    let mut mapped = String::new();
                     loop {
                         let chunk = chunk_rx.lock().unwrap().recv();
                         let Ok(chunk) = chunk else { break };
                         let text = std::str::from_utf8(&chunk)
                             .unwrap_or_else(|e| die(&format!("input is not UTF-8: {e}")));
-                        gigatrain::split::for_each_word(text, |w| {
+                        // Route on the high bits: the low bits pick the
+                        // hash-map bucket, so reusing them here would leave
+                        // each shard's index sparsely populated.
+                        let mut route = |w: &str| {
                             let h = gigatrain::counter::hash_word(w);
-                            // Route on the high bits: the low bits pick the
-                            // hash-map bucket, so reusing them here would
-                            // leave each shard's index sparsely populated.
                             let shard = ((h >> 32) % nshards) as usize;
                             batches[shard].push(w, h);
                             if batches[shard].bytes() >= batch_bytes {
                                 let full = std::mem::take(&mut batches[shard]);
                                 let _ = batch_senders[shard].send(full);
                             }
-                        });
+                        };
+                        if bytelevel {
+                            // Per line, matching HF's line-at-a-time feed: a
+                            // trailing newline is terminal within its line, so
+                            // "x\r\n" ends in one `čĊ` token rather than two.
+                            for line in text.split_inclusive('\n') {
+                                gigatrain::bytelevel::for_each_token(
+                                    line,
+                                    &table,
+                                    &mut mapped,
+                                    &mut route,
+                                );
+                            }
+                        } else {
+                            gigatrain::split::for_each_word(text, route);
+                        }
                     }
                     for (shard, batch) in batches.into_iter().enumerate() {
                         if !batch.is_empty() {
@@ -204,12 +230,15 @@ fn count_words_parallel(paths: &[String], nthreads: usize) -> WordTable {
                 let jobs = Arc::clone(&jobs);
                 let next_job = Arc::clone(&next_job);
                 let chunk = sizing.chunk;
+                let rule = cut_rule;
                 s.spawn(move || loop {
                     let i = next_job.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some((path, start, end)) = jobs.get(i) else {
                         break;
                     };
-                    if let Err(e) = gigatrain::reader::read_range(path, *start, *end, chunk, &tx) {
+                    if let Err(e) =
+                        gigatrain::reader::read_range(path, *start, *end, chunk, rule, &tx)
+                    {
                         die(&e);
                     }
                 })
@@ -247,6 +276,7 @@ fn main() {
     let mut vocab_size: Option<usize> = None;
     let mut words_tsv: Option<String> = None;
     let mut threads: Option<usize> = None;
+    let mut bytelevel = false;
     let mut inputs: Vec<String> = vec![];
 
     let mut args = std::env::args().skip(1);
@@ -266,6 +296,15 @@ fn main() {
                 config.limit_alphabet = Some(val("--limit-alphabet").parse().unwrap())
             }
             "--threads" => threads = Some(val("--threads").parse().unwrap()),
+            "--pretokenizer" => {
+                bytelevel = match val("--pretokenizer").as_str() {
+                    "bytelevel" => true,
+                    "whitespace" => false,
+                    other => die(&format!(
+                        "unknown --pretokenizer {other} (want whitespace or bytelevel)"
+                    )),
+                }
+            }
             "--words-tsv" => words_tsv = Some(val("--words-tsv")),
             _ if arg.starts_with("--") => die(&format!("unknown flag {arg}")),
             _ => inputs.push(arg),
@@ -297,7 +336,7 @@ fn main() {
         if inputs.is_empty() {
             die("no input files (or --words-tsv) given");
         }
-        count_words_parallel(&inputs, nthreads)
+        count_words_parallel(&inputs, nthreads, bytelevel)
     };
     let t_phase1 = t0.elapsed();
     let word_count = word_table.len();
