@@ -251,6 +251,8 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
     // 5. Merge loop.
     let mut merges: Vec<(Pair, u32)> = vec![];
     let mut changes: Vec<(Pair, i32)> = vec![];
+    // Recycled position-list buffers (see the recycle site below).
+    let mut pos_pool: Vec<Vec<u32>> = Vec::new();
     loop {
         if word_to_id.len() >= config.vocab_size {
             break;
@@ -301,10 +303,20 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
             for &(pair, change) in &changes {
                 *pair_counts.entry(pair).or_default() += change as i64 * counts[i as usize] as i64;
                 if change > 0 {
-                    push_pos(where_to_update.entry(pair).or_default(), i);
+                    let entry = where_to_update
+                        .entry(pair)
+                        .or_insert_with(|| pos_pool.pop().unwrap_or_default());
+                    push_pos(entry, i);
                 }
             }
         }
+
+        // This entry is spent: recycle its buffer rather than freeing it.
+        // Every merge allocates a fresh position list per touched pair, and a
+        // sampling profile put ~6% of the merge loop in that growth alone.
+        let mut spent = top.pos;
+        spent.clear();
+        pos_pool.push(spent);
 
         for (pair, pos) in where_to_update.drain() {
             let count = pair_counts[&pair];
@@ -314,6 +326,10 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
                     count: count as u64,
                     pos,
                 });
+            } else {
+                let mut recycled = pos;
+                recycled.clear();
+                pos_pool.push(recycled);
             }
         }
     }
