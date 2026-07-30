@@ -23,18 +23,34 @@ Baseline: `tokenizers` 0.22.2 (Python), rayon across all 10 cores.
 
 | corpus | trainer | wall | peak RSS | speedup | parity |
 |---|---|---|---|---|---|
-| 100 MB | gigatrain | 1.7 s | 224 MB | 11.8x | IDENTICAL |
+| 100 MB | gigatrain | 1.2 s | 224 MB | ~50x | IDENTICAL |
 | 100 MB | HF BpeTrainer | 61.2 s (incl. pretok) | — | | |
-| 12.9 GB | gigatrain | **104 s** | **2.4 GB** | — | — |
+| 1 GB | gigatrain | 8.5 s | 725 MB | — | IDENTICAL |
+| 12.9 GB | gigatrain | **85 s** | **2.2 GB** | — | — |
 
 ByteLevel favours gigatrain more than whitespace does: HF pays for a regex
 engine per document, while this is a hand-written state machine. It also
 produces far fewer unique pretokens (1.6M vs 4.1M at 1 GB) because
 punctuation splits, which shrinks phase 2 substantially.
 
-At 12.9 GB / ByteLevel: phase 1 88.9 s, phase 2 14.7 s, 8.96M unique
+At 12.9 GB / ByteLevel: phase 1 70.6 s, phase 2 14.8 s, 8.96M unique
 pretokens. Whitespace on the same file: 85.7 s total, 6.4 GB peak, 27.4M
 unique pretokens.
+
+### Phase 1 became the bottleneck, and was optimized twice
+
+Once ByteLevel landed, the profile inverted: phase 1 was 85% of the 12.9 GB
+run (88.9 s of 104 s), not the merge loop. Two fixes, both verified against
+the full BMP parity sweep:
+
+| change | phase 1 @ 100 MB | why |
+|---|---|---|
+| baseline | 1.06–1.21 s | |
+| ASCII lookup for `\p{L}`/`\p{N}` | 0.67–0.86 s | a binary search over ~700 ranges ran per character, ~13 billion times on the 13 GB corpus |
+| defer byte-to-unicode mapping | 0.45–0.48 s | the map is a bijection, so pieces can be counted raw and mapped only for the ~9M unique words instead of every occurrence |
+
+Together ~2.4x on phase 1, taking 12.9 GB from 104 s to **85 s** and peak RSS
+from 2.4 GB to 2.2 GB.
 
 ### The HF baseline at 12.9 GB
 

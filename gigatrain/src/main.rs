@@ -163,8 +163,6 @@ fn count_words_parallel(paths: &[String], nthreads: usize, bytelevel: bool) -> W
                     let nshards = nthreads as u64;
                     let mut batches: Vec<WordBatch> =
                         (0..nthreads).map(|_| WordBatch::new()).collect();
-                    let table = gigatrain::bytelevel::byte_to_char();
-                    let mut mapped = String::new();
                     loop {
                         let chunk = chunk_rx.lock().unwrap().recv();
                         let Ok(chunk) = chunk else { break };
@@ -186,13 +184,13 @@ fn count_words_parallel(paths: &[String], nthreads: usize, bytelevel: bool) -> W
                             // Per line, matching HF's line-at-a-time feed: a
                             // trailing newline is terminal within its line, so
                             // "x\r\n" ends in one `čĊ` token rather than two.
+                            //
+                            // Pieces are counted unmapped; the byte-to-unicode
+                            // map is a bijection, so equality is unaffected and
+                            // the mapping is deferred to the unique words when
+                            // shards are combined.
                             for line in text.split_inclusive('\n') {
-                                gigatrain::bytelevel::for_each_token(
-                                    line,
-                                    &table,
-                                    &mut mapped,
-                                    &mut route,
-                                );
+                                gigatrain::bytelevel::for_each_piece(line, &mut route);
                             }
                         } else {
                             gigatrain::split::for_each_word(text, route);
@@ -261,10 +259,17 @@ fn count_words_parallel(paths: &[String], nthreads: usize, bytelevel: bool) -> W
     let total_words: usize = maps.iter().map(|m| m.len()).sum();
     let total_bytes: usize = maps.iter().map(|m| m.total_bytes()).sum();
     let mut table = WordTable::with_capacity(total_words, total_bytes);
+    let byte_table = gigatrain::bytelevel::byte_to_char();
+    let mut mapped = String::new();
     for map in maps.drain(..) {
         let shard = map.into_table();
         for i in 0..shard.len() {
-            table.push(shard.word(i), shard.count(i));
+            if bytelevel {
+                gigatrain::bytelevel::map_bytes(shard.word(i), &byte_table, &mut mapped);
+                table.push(&mapped, shard.count(i));
+            } else {
+                table.push(shard.word(i), shard.count(i));
+            }
         }
     }
     gigatrain::rss::report("combining shards");

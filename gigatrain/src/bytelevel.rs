@@ -129,22 +129,39 @@ fn next_piece_len(s: &str) -> usize {
     end
 }
 
-/// Call `f` with each ByteLevel-mapped token of `text`.
+/// Call `f` with each *unmapped* GPT-2 piece of `text`.
 ///
-/// `buf` is reused across calls to avoid per-token allocation.
-pub fn for_each_token(text: &str, table: &[char; 256], buf: &mut String, mut f: impl FnMut(&str)) {
+/// The byte-to-unicode mapping is a bijection, so two pieces are equal after
+/// mapping exactly when they are equal before it. Phase 1 therefore hashes and
+/// counts raw pieces and maps only the unique words at the end — roughly 9M
+/// mappings on a 13 GB corpus instead of one per token occurrence.
+pub fn for_each_piece<'a>(text: &'a str, mut f: impl FnMut(&'a str)) {
     let mut rest = text;
     while !rest.is_empty() {
         let n = next_piece_len(rest);
         debug_assert!(n > 0, "zero-length piece would loop forever");
-        let piece = &rest[..n];
-        buf.clear();
-        for &b in piece.as_bytes() {
-            buf.push(table[b as usize]);
-        }
-        f(buf);
+        f(&rest[..n]);
         rest = &rest[n..];
     }
+}
+
+/// Apply the byte-to-unicode map to `piece`, writing into `buf`.
+#[inline]
+pub fn map_bytes(piece: &str, table: &[char; 256], buf: &mut String) {
+    buf.clear();
+    for &b in piece.as_bytes() {
+        buf.push(table[b as usize]);
+    }
+}
+
+/// Call `f` with each ByteLevel-mapped token of `text`.
+///
+/// `buf` is reused across calls to avoid per-token allocation.
+pub fn for_each_token(text: &str, table: &[char; 256], buf: &mut String, mut f: impl FnMut(&str)) {
+    for_each_piece(text, |piece| {
+        map_bytes(piece, table, buf);
+        f(buf);
+    });
 }
 
 #[cfg(test)]
