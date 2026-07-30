@@ -16,20 +16,32 @@ Zero dependencies. Rust.
 
 ## Why
 
-Tokenizer *encoding* is a solved speed problem
-([gigatoken](https://github.com/marcelroed/gigatoken) reaches ~24 GB/s).
-Training is not. HuggingFace `tokenizers` becomes impractical well before
-web scale:
+Training a BPE vocabulary on a large corpus is memory-bound, and the
+incumbents fall over on memory before they fall over on time:
 
-- [#1313](https://github.com/huggingface/tokenizers/issues/1313): 13 GB
-  corpus, 256 threads, unfinished after 10+ hours.
-- [#1681](https://github.com/huggingface/tokenizers/issues/1681): 20 GB
-  corpus OOMs during the merge phase on 1.5 TB and 2 TB machines.
+- [tokenizers #1681](https://github.com/huggingface/tokenizers/issues/1681):
+  20 GB corpus OOMs on 1.5 TB and 2 TB machines. Closed without an answer.
+- [tokenizers #1795](https://github.com/huggingface/tokenizers/issues/1795),
+  [#1824](https://github.com/huggingface/tokenizers/issues/1824): still open.
+- [sentencepiece #1021](https://github.com/google/sentencepiece/issues/1021):
+  31.2 GB corpus, vocab 4096, **1.8 TB** of memory, unfinished at 24 hours.
+- [sentencepiece #782](https://github.com/google/sentencepiece/issues/782):
+  maintainer's answer is that no workaround exists other than sampling less
+  data.
 
-The practical workaround everywhere is to sample the corpus down and train on
-a fraction of it. That is a real cost: it means nobody studies vocabulary
-design empirically at scale, because you cannot afford to train twenty
-vocabularies on a terabyte.
+The universal workaround is to sample the corpus down. That has a real cost:
+Reddy et al. ([arXiv:2502.20273](https://arxiv.org/abs/2502.20273)) trained
+396 tokenizers from 1 GB to 900 GB and found vocabulary composition does not
+reach 90% overlap with the 900 GB tokenizer until **150–180 GB** — far above
+what anyone actually trains on. They could not use HuggingFace for BPE and
+wrote their own trainer.
+
+**gigatrain is not a new algorithm.** Incremental pair counts with an
+inverted index and a lazy heap is the standard approach, formalized by
+[Zouhar et al. 2023](https://arxiv.org/abs/2306.16837) and already
+implemented by `tokenizers` and SentencePiece. The contribution here is
+memory layout and a parallel phase 1, plus an unusually thorough parity
+contract.
 
 ## Results
 
@@ -118,10 +130,19 @@ expects to be the memory hazard was 1 MB.
 
 ## Prior art
 
-`tokenizers` and SentencePiece are the incumbents, and SentencePiece
-shipped a large BPE training speedup in v0.2.2 (July 2026) that any honest
-comparison has to account for. A survey of existing fast BPE trainers, with
-numbers, is in [PRIOR_ART.md](PRIOR_ART.md).
+Read [PRIOR_ART.md](PRIOR_ART.md) before citing any claim here. The short
+version:
+
+- **[gigatoken](https://github.com/marcelroed/gigatoken) already ships a BPE
+  trainer** with a HuggingFace tie-breaking mode and a CI test asserting
+  identical merge lists. It is undocumented and validated at ~120 KB / vocab
+  500; gigatrain differs in phase-1 architecture, memory layout, and parity
+  scope, not in being first.
+- **SentencePiece got ~20x faster at BPE training in v0.2.2** (July 2026,
+  lazy priority queue). Any comparison against an older version is a
+  strawman.
+- HuggingFace at 1 GB is around 60 s, not hours. The gap at that size is
+  ~6x, not orders of magnitude.
 
 ## License
 

@@ -20,21 +20,24 @@ Baseline: `tokenizers` 0.22.2 (Python), rayon across all 10 cores.
 At 1 GB: phase 1 (read + pretokenize + count) 1.3 s, phase 2 (merge loop)
 9.8 s. 4.14M unique pretokens, 39.3M symbols.
 
-## The 13 GB case (issue #1313)
-
-HF issue #1313 reports a 13 GB corpus on 256 threads still unfinished after
-10+ hours, with YouTokenToMe doing the same job in under 10 minutes on 8.
+## The 13 GB case
 
 **gigatrain trains 12.9 GB of FineWeb in 85.7 s (6.4 GB peak RSS)** on 10
 cores: phase 1 18.1 s, phase 2 67.4 s, 27.4M unique pretokens, 32k vocab.
-That is the whole of issue #1313's workload in under a minute and a half on a
-laptop, well inside RAM.
 
-The HF baseline on the identical file is being measured; it exceeded RAM and
-drove the machine into swap (7+ GB RSS with 6.9 GB of swap in use), which is
-the failure mode issue #1681 describes. Numbers to follow — a swap-bound
-result says as much about the machine as the trainer, and will be labelled
-that way.
+**This is not a reproduction of HF issue #1313**, and an earlier version of
+this file wrongly said it was. That issue used `vocab_size=512` on ~13
+billion characters, so its merge loop runs only a couple of hundred merges;
+the reported 10+ hours almost certainly came from degenerate pretokenization
+on unsegmented data, not from merge-loop cost. A 32k-vocab FineWeb run is a
+different and much merge-heavier workload. The honest open issues about
+trainer scale are the memory ones — #1681 (20 GB OOM on 1.5–2 TB machines),
+#1795, #1824 — not #1313.
+
+The HF baseline on the identical file exceeded RAM on this machine and drove
+it into swap (7+ GB RSS against 12.5 GB of swap in use), which is the failure
+mode #1681 describes. Its wall time therefore measures this laptop's SSD as
+much as the trainer, and is reported as such rather than as a clean speedup.
 
 ## Progression (1 GB corpus)
 
