@@ -7,13 +7,30 @@ cd "$(dirname "$0")/.."
 WORK="${PARITY_WORK_DIR:-$(mktemp -d)}"
 mkdir -p "$WORK"
 
+# Pick an interpreter that actually has `tokenizers` installed; `python3` on
+# PATH varies between shells (framework vs conda).
+if [ -z "${PYTHON:-}" ]; then
+  for candidate in python3 /opt/miniconda3/bin/python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && \
+       "$candidate" -c "import tokenizers" >/dev/null 2>&1; then
+      PYTHON="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "${PYTHON:-}" ]; then
+  echo "error: no python with the 'tokenizers' package found; set PYTHON=..." >&2
+  exit 1
+fi
+echo "using python: $($PYTHON -c 'import sys, tokenizers; print(sys.executable, "tokenizers", tokenizers.__version__)')"
+
 echo "== cargo tests (includes ports of HF's own trainer tests) =="
 (cd gigatrain && cargo test --release --quiet)
 (cd gigatrain && cargo build --release --quiet)
 
 echo "== generating synthetic corpus =="
 if [ ! -f "$WORK/synth.txt" ]; then
-  python3 - "$WORK/synth.txt" <<'EOF'
+  "$PYTHON" - "$WORK/synth.txt" <<'EOF'
 import sys
 import corpus
 _, texts = corpus.make_corpus(12_000_000)
@@ -29,27 +46,27 @@ echo "== fetching real corpora =="
   curl -sL -o "$WORK/hongloumeng.txt" https://www.gutenberg.org/cache/epub/24264/pg24264.txt
 
 echo "== parity: synthetic, 32k vocab, special tokens =="
-python3 scripts/parity_check.py --files "$WORK/synth.txt" --vocab-size 32000 \
+"$PYTHON" scripts/parity_check.py --files "$WORK/synth.txt" --vocab-size 32000 \
   --special "<|endoftext|>" --special "<pad>"
 
 echo "== parity: multilingual (en+zh), max-token-length =="
-python3 scripts/parity_check.py --files "$WORK/war_and_peace.txt" "$WORK/hongloumeng.txt" \
+"$PYTHON" scripts/parity_check.py --files "$WORK/war_and_peace.txt" "$WORK/hongloumeng.txt" \
   --vocab-size 8000 --max-token-length 16
 
 echo "== parity: min-frequency =="
-python3 scripts/parity_check.py --files "$WORK/war_and_peace.txt" \
+"$PYTHON" scripts/parity_check.py --files "$WORK/war_and_peace.txt" \
   --vocab-size 5000 --min-frequency 4
 
 echo "== parity: colliding special tokens (ID-reuse path) =="
-python3 scripts/parity_check.py --files "$WORK/war_and_peace.txt" \
+"$PYTHON" scripts/parity_check.py --files "$WORK/war_and_peace.txt" \
   --vocab-size 2000 --special "th" --special "e" --special "<eos>"
 
 echo "== parity: limit-alphabet =="
-python3 scripts/parity_check.py --files "$WORK/war_and_peace.txt" \
+"$PYTHON" scripts/parity_check.py --files "$WORK/war_and_peace.txt" \
   --vocab-size 3000 --limit-alphabet 60
 
 echo "== fuzz: 1000 random word tables =="
-python3 scripts/parity_fuzz.py --trials 1000 --seed 7
+"$PYTHON" scripts/parity_fuzz.py --trials 1000 --seed 7
 
 echo
 echo "ALL PARITY CHECKS PASSED"

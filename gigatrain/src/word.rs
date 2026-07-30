@@ -1,9 +1,14 @@
-//! Word representation and in-word merge application.
+//! Word storage and in-word merge application.
 //!
-//! Semantics must match HF `tokenizers` `models/bpe/word.rs::Word::merge`
+//! Merge semantics must match HF `tokenizers` `models/bpe/word.rs::Word::merge`
 //! exactly (see PARITY.md). HF splices a Vec in place and re-reads neighbors
 //! post-splice; we use a write-pointer scan that emits the identical multiset
 //! of pair-count deltas without O(n^2) splicing.
+//!
+//! Storage is a flat arena rather than a `Vec<Symbol>` per word. A merge only
+//! ever shrinks a word, so each word's slice start is fixed for the whole run
+//! and only its length shrinks — the arena never reallocates, never needs
+//! compaction, and costs one allocation instead of one per unique word.
 
 pub type Pair = (u32, u32);
 
@@ -14,24 +19,48 @@ pub struct Symbol {
     pub len: u32,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Word {
-    pub symbols: Vec<Symbol>,
+#[derive(Default)]
+pub struct WordArena {
+    symbols: Vec<Symbol>,
+    /// Per word: offset into `symbols` (fixed) and current length (shrinks).
+    starts: Vec<u32>,
+    lens: Vec<u32>,
 }
 
-impl Word {
-    pub fn with_capacity(capacity: usize) -> Self {
+impl WordArena {
+    pub fn with_capacity(words: usize, symbols: usize) -> Self {
         Self {
-            symbols: Vec::with_capacity(capacity),
+            symbols: Vec::with_capacity(symbols),
+            starts: Vec::with_capacity(words),
+            lens: Vec::with_capacity(words),
         }
     }
 
-    pub fn add(&mut self, c: u32) {
-        self.symbols.push(Symbol { c, len: 1 });
+    /// Append a word built from `chars` (already mapped to vocab IDs).
+    pub fn push_word(&mut self, chars: impl Iterator<Item = u32>) {
+        let start = self.symbols.len();
+        assert!(start <= u32::MAX as usize, "symbol arena exceeds 4G symbols");
+        self.symbols.extend(chars.map(|c| Symbol { c, len: 1 }));
+        self.starts.push(start as u32);
+        self.lens.push((self.symbols.len() - start) as u32);
     }
 
-    /// Merge every non-overlapping occurrence of (c1, c2), left to right,
-    /// appending pair-count deltas to `changes` as (pair, delta).
+    pub fn len(&self) -> usize {
+        self.starts.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.starts.is_empty()
+    }
+
+    #[inline]
+    pub fn symbols_of(&self, i: usize) -> &[Symbol] {
+        let start = self.starts[i] as usize;
+        &self.symbols[start..start + self.lens[i] as usize]
+    }
+
+    /// Merge every non-overlapping occurrence of (c1, c2) in word `i`, left to
+    /// right, appending pair-count deltas to `changes` as (pair, delta).
     ///
     /// Parity notes (PARITY.md): the merged pair itself is never decremented;
     /// the left neighbor is read post-merge (may be a symbol produced earlier
@@ -39,14 +68,16 @@ impl Word {
     /// to the newly formed neighbor pairs.
     pub fn merge(
         &mut self,
+        i: usize,
         c1: u32,
         c2: u32,
         new_id: u32,
         max_len: usize,
         changes: &mut Vec<(Pair, i32)>,
     ) {
-        let syms = &mut self.symbols;
-        let n = syms.len();
+        let start = self.starts[i] as usize;
+        let n = self.lens[i] as usize;
+        let syms = &mut self.symbols[start..start + n];
         let mut w = 0;
         let mut k = 0;
         while k < n {
@@ -78,7 +109,7 @@ impl Word {
                 k += 1;
             }
         }
-        syms.truncate(w);
+        self.lens[i] = w as u32;
     }
 }
 
@@ -86,20 +117,23 @@ impl Word {
 mod tests {
     use super::*;
 
-    fn chars(word: &Word) -> Vec<u32> {
-        word.symbols.iter().map(|s| s.c).collect()
+    fn arena_of(chars: &[u32]) -> WordArena {
+        let mut a = WordArena::default();
+        a.push_word(chars.iter().copied());
+        a
+    }
+
+    fn chars(a: &WordArena) -> Vec<u32> {
+        a.symbols_of(0).iter().map(|s| s.c).collect()
     }
 
     // Port of HF word.rs::tests::test_merge ("hello", merge 'l'+'l' -> 'll').
     #[test]
     fn test_merge() {
-        let mut word = Word::default();
-        for c in [0, 1, 2, 2, 3] {
-            word.add(c);
-        }
+        let mut a = arena_of(&[0, 1, 2, 2, 3]);
         let mut changes = vec![];
-        word.merge(2, 2, 4, usize::MAX, &mut changes);
-        assert_eq!(chars(&word), &[0, 1, 4, 3]);
+        a.merge(0, 2, 2, 4, usize::MAX, &mut changes);
+        assert_eq!(chars(&a), &[0, 1, 4, 3]);
         assert_eq!(
             changes,
             &[((1, 2), -1), ((1, 4), 1), ((2, 3), -1), ((4, 3), 1)]
@@ -109,13 +143,10 @@ mod tests {
     // Port of HF word.rs::tests::test_merge_max_length (max_length = 2).
     #[test]
     fn test_merge_max_length() {
-        let mut word = Word::default();
-        for c in [0, 1, 2, 2, 3] {
-            word.add(c);
-        }
+        let mut a = arena_of(&[0, 1, 2, 2, 3]);
         let mut changes = vec![];
-        word.merge(2, 2, 4, 2, &mut changes);
-        assert_eq!(chars(&word), &[0, 1, 4, 3]);
+        a.merge(0, 2, 2, 4, 2, &mut changes);
+        assert_eq!(chars(&a), &[0, 1, 4, 3]);
         assert_eq!(changes, &[((1, 2), -1), ((2, 3), -1)]);
     }
 
@@ -123,15 +154,10 @@ mod tests {
     // occurrence seeing the first merged symbol as its left neighbor.
     #[test]
     fn test_merge_overlaps() {
-        let mut word = Word::default();
-        for c in [7, 7, 7, 7] {
-            word.add(c);
-        }
+        let mut a = arena_of(&[7, 7, 7, 7]);
         let mut changes = vec![];
-        word.merge(7, 7, 9, usize::MAX, &mut changes);
-        assert_eq!(chars(&word), &[9, 9]);
-        // occ 1: right neighbor = third 'a': (a,a)-1, (aa,a)+1
-        // occ 2: left neighbor = merged 'aa': (aa,a)-1, (aa,aa)+1
+        a.merge(0, 7, 7, 9, usize::MAX, &mut changes);
+        assert_eq!(chars(&a), &[9, 9]);
         assert_eq!(
             changes,
             &[((7, 7), -1), ((9, 7), 1), ((9, 7), -1), ((9, 9), 1)]
@@ -141,13 +167,34 @@ mod tests {
     // "aaa" -> [aa, a]: trailing odd symbol stays.
     #[test]
     fn test_merge_odd_run() {
-        let mut word = Word::default();
-        for c in [7, 7, 7] {
-            word.add(c);
-        }
+        let mut a = arena_of(&[7, 7, 7]);
         let mut changes = vec![];
-        word.merge(7, 7, 9, usize::MAX, &mut changes);
-        assert_eq!(chars(&word), &[9, 7]);
+        a.merge(0, 7, 7, 9, usize::MAX, &mut changes);
+        assert_eq!(chars(&a), &[9, 7]);
         assert_eq!(changes, &[((7, 7), -1), ((9, 7), 1)]);
+    }
+
+    // Words are independent: merging word 1 leaves word 0 and 2 untouched,
+    // and shrunk words never disturb their neighbors' slices.
+    #[test]
+    fn test_multiple_words_independent() {
+        let mut a = WordArena::default();
+        a.push_word([5, 5, 6].iter().copied());
+        a.push_word([5, 5, 5, 5].iter().copied());
+        a.push_word([6, 5, 5].iter().copied());
+        let mut changes = vec![];
+        a.merge(1, 5, 5, 9, usize::MAX, &mut changes);
+        assert_eq!(
+            a.symbols_of(0).iter().map(|s| s.c).collect::<Vec<_>>(),
+            &[5, 5, 6]
+        );
+        assert_eq!(
+            a.symbols_of(1).iter().map(|s| s.c).collect::<Vec<_>>(),
+            &[9, 9]
+        );
+        assert_eq!(
+            a.symbols_of(2).iter().map(|s| s.c).collect::<Vec<_>>(),
+            &[6, 5, 5]
+        );
     }
 }

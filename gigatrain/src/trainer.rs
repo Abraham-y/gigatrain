@@ -6,13 +6,15 @@
 //! partial position sets, duplicate merges).
 //!
 //! Representation choices that differ from HF without affecting output:
-//! position lists are Vec<u32> instead of HashSet<usize> (deduped on push:
-//! within one merge step words are processed one at a time, so duplicate
-//! inserts for a pair are always adjacent); maps use FxHash. Both only
-//! change iteration order / memory, which the algorithm is insensitive to.
+//! words live in a flat symbol arena; position lists are Vec<u32> instead of
+//! HashSet<usize> (deduped on push: within one merge step words are processed
+//! one at a time, so duplicate inserts for a pair are always adjacent); maps
+//! use FxHash. These change memory layout and iteration order only, which the
+//! algorithm is insensitive to.
 
 use crate::fxhash::FxHashMap;
-use crate::word::{Pair, Word};
+use crate::word::{Pair, WordArena};
+use crate::wordtable::WordTable;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -104,9 +106,12 @@ fn push_pos(pos: &mut Vec<u32>, i: u32) {
     }
 }
 
-/// Train BPE over a word-frequency table. `word_counts` order is irrelevant
-/// to the output (it only determines internal word indices).
-pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResult {
+/// Train BPE over a word-frequency table. Table order is irrelevant to the
+/// output (it only determines internal word indices).
+///
+/// Takes the table by value so word strings can be freed once tokenized,
+/// before the merge loop — they are dead weight from that point on.
+pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
     let max_token_length = config.max_token_length.unwrap_or(usize::MAX);
 
     let mut word_to_id: FxHashMap<String, u32> = FxHashMap::default();
@@ -125,9 +130,9 @@ pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResu
     //    ID-ordered by codepoint.
     {
         let mut alphabet: FxHashMap<char, usize> = FxHashMap::default();
-        for (word, count) in word_counts {
+        for (word, count) in word_table.iter() {
             for c in word.chars() {
-                *alphabet.entry(c).or_default() += *count as usize;
+                *alphabet.entry(c).or_default() += count as usize;
             }
         }
         for c in &config.initial_alphabet {
@@ -173,29 +178,45 @@ pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResu
         .collect();
 
     // 3. Tokenize words into symbol sequences; chars outside the alphabet
-    //    (only possible under limit_alphabet) are dropped.
-    let mut words: Vec<Word> = Vec::with_capacity(word_counts.len());
-    let mut counts: Vec<u64> = Vec::with_capacity(word_counts.len());
-    for (word, count) in word_counts {
-        counts.push(*count);
-        let mut w = Word::with_capacity(word.chars().count());
-        for c in word.chars() {
-            if let Some(&id) = char_to_id.get(&c) {
-                w.add(id);
-            }
-        }
-        words.push(w);
+    //    (only possible under limit_alphabet) are dropped. Word strings are
+    //    dropped immediately afterwards.
+    let n_words = word_table.len();
+    let mut words = WordArena::with_capacity(n_words, word_table.total_bytes());
+    let mut counts: Vec<u64> = Vec::with_capacity(n_words);
+    for (word, count) in word_table.iter() {
+        counts.push(count);
+        words.push_word(word.chars().filter_map(|c| char_to_id.get(&c).copied()));
     }
+    crate::rss::report("tokenize (word strings still held)");
+    drop(word_table);
+    crate::rss::report("dropping word strings");
 
     // 4. Initial pair counts and the inverted index of where each pair lives.
     let mut pair_counts: FxHashMap<Pair, i64> = FxHashMap::default();
     let mut where_to_update: FxHashMap<Pair, Vec<u32>> = FxHashMap::default();
-    for (i, word) in words.iter().enumerate() {
-        for win in word.symbols.windows(2) {
+    for i in 0..words.len() {
+        for win in words.symbols_of(i).windows(2) {
             let pair = (win[0].c, win[1].c);
             *pair_counts.entry(pair).or_default() += counts[i] as i64;
             push_pos(where_to_update.entry(pair).or_default(), i as u32);
         }
+    }
+
+    if std::env::var_os("GIGATRAIN_STATS").is_some() {
+        let symbols = (0..words.len()).map(|i| words.symbols_of(i).len()).sum::<usize>();
+        let pos_entries: usize = where_to_update.values().map(|v| v.len()).sum();
+        let pos_cap: usize = where_to_update.values().map(|v| v.capacity()).sum();
+        eprintln!(
+            "stats: words={} symbols={} ({} MB) pairs={} ({} MB) pos_entries={} pos_cap={} ({} MB incl. Vec headers)",
+            words.len(),
+            symbols,
+            symbols * std::mem::size_of::<crate::word::Symbol>() / (1 << 20),
+            pair_counts.len(),
+            pair_counts.len() * 20 / (1 << 20),
+            pos_entries,
+            pos_cap,
+            (pos_cap * 4 + where_to_update.len() * 24) / (1 << 20),
+        );
     }
 
     let mut queue: BinaryHeap<MergeEntry> = BinaryHeap::with_capacity(pair_counts.len());
@@ -250,7 +271,8 @@ pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResu
         // when the pair re-formed after an earlier merge of it — HF behavior).
         for &i in &top.pos {
             changes.clear();
-            words[i as usize].merge(
+            words.merge(
+                i as usize,
                 top.pair.0,
                 top.pair.1,
                 new_token_id,
@@ -287,8 +309,12 @@ pub fn train(word_counts: &[(String, u64)], config: &TrainerConfig) -> TrainResu
 mod tests {
     use super::*;
 
-    fn counts(pairs: &[(&str, u64)]) -> Vec<(String, u64)> {
-        pairs.iter().map(|(w, c)| (w.to_string(), *c)).collect()
+    fn counts(pairs: &[(&str, u64)]) -> WordTable {
+        let mut t = WordTable::new();
+        for (w, c) in pairs {
+            t.push(w, *c);
+        }
+        t
     }
 
     // Port of HF trainer.rs::tests::test_train (roses are red...).
@@ -312,7 +338,7 @@ mod tests {
             vocab_size: 30000,
             ..Default::default()
         };
-        let result = train(&word_counts, &config);
+        let result = train(word_counts, &config);
 
         let expected_vocab: Vec<&str> = vec![
             "-", "2", "B", "E", "G", "P", "R", "T", "a", "b", "d", "e", "g", "i", "l", "n", "o",
@@ -349,7 +375,7 @@ mod tests {
             vocab_size: 30000,
             ..Default::default()
         };
-        let result = train(&word_counts, &config);
+        let result = train(word_counts, &config);
 
         let mut expected: Vec<(&str, u32)> = vec![
             ("短", 12),
@@ -397,7 +423,7 @@ mod tests {
             vocab_size: 30000,
             ..Default::default()
         };
-        let result = train(&word_counts, &config);
+        let result = train(word_counts, &config);
         assert_eq!(result.vocab, vec!["a", "aa"]);
         assert_eq!(result.merges, vec![((0, 0), 1)]);
     }
@@ -411,7 +437,7 @@ mod tests {
             vocab_size: 5,
             ..Default::default()
         };
-        let result = train(&word_counts, &config);
+        let result = train(word_counts, &config);
         // alphabet: a=0 b=1 c=2 d=3; first merge must be (1,0) -> "ba"
         assert_eq!(result.merges[0], ((1, 0), 4));
     }

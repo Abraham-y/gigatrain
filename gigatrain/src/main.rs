@@ -17,8 +17,8 @@
 //! equivalent to HF's WhitespaceSplit. Files are streamed in 32MB chunks
 //! (never fully resident) and counted across threads.
 
-use gigatrain::fxhash::FxHashMap;
-use gigatrain::{train, TrainerConfig};
+use gigatrain::batch::WordBatch;
+use gigatrain::{train, TrainerConfig, WordCounter, WordTable};
 use std::io::{Read, Write};
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
@@ -29,36 +29,61 @@ fn die(msg: &str) -> ! {
     std::process::exit(2);
 }
 
-const CHUNK: usize = 32 << 20;
+/// Chunk size for the reader. Small enough that in-flight chunks stay a
+/// negligible share of peak RSS (queue depth x this x ~2 for chunks held by
+/// scanners), large enough to amortize the read syscall and boundary scan.
+const CHUNK: usize = 4 << 20;
 
-/// Stream `paths` as whitespace-bounded chunks; count words across
-/// `nthreads` workers; merge worker maps in first-seen order.
+/// Stream `paths` as whitespace-bounded chunks and count words in parallel.
+///
+/// Three stages, so that no stage's work is replicated and all of it divides
+/// across cores:
+///
+///   reader -> scanners (split + hash + route) -> shard owners (count)
+///
+/// Words are routed to shard `hash % nshards`, so shards are disjoint: each
+/// unique word is stored exactly once machine-wide, and the final combine is
+/// a concatenation with no lookups. Two designs were measured and rejected on
+/// a 1 GB FineWeb corpus (10 cores):
+///
+///   - per-worker maps merged at the end: 2.4 s but 1.3 GB peak, since every
+///     worker stores its own copy of every frequent word and the union is
+///     then merged single-threaded;
+///   - broadcasting each chunk to every shard owner: 422 MB but 4.8 s, since
+///     splitting and hashing the whole corpus is then replicated per worker.
+///     It also barely scales (9.8 s on 1 thread to 4.8 s on 10) because the
+///     replicated part is a fixed floor — worse on machines with more cores.
+///
+/// Scanners and owners are separate thread pools: scanners only send and
+/// owners only receive, so bounded channels cannot deadlock.
 ///
 /// Chunks are cut at ASCII whitespace bytes, which are always real word
 /// boundaries (UTF-8 continuation bytes are never ASCII, and every ASCII
 /// whitespace char satisfies char::is_whitespace).
-fn count_words_parallel(paths: &[String], nthreads: usize) -> Vec<(String, u64)> {
-    let (tx, rx) = sync_channel::<Vec<u8>>(nthreads * 2);
-    let rx = Arc::new(Mutex::new(rx));
+fn count_words_parallel(paths: &[String], nthreads: usize) -> WordTable {
+    // Ship a batch once it reaches this many bytes of packed words.
+    const BATCH_BYTES: usize = 64 << 10;
 
-    let maps: Vec<FxHashMap<String, u64>> = std::thread::scope(|s| {
-        let handles: Vec<_> = (0..nthreads)
-            .map(|_| {
-                let rx = Arc::clone(&rx);
+    let (chunk_tx, chunk_rx) = sync_channel::<Arc<Vec<u8>>>(nthreads);
+    let chunk_rx = Arc::new(Mutex::new(chunk_rx));
+
+    let mut batch_senders = Vec::with_capacity(nthreads);
+    let mut batch_receivers = Vec::with_capacity(nthreads);
+    for _ in 0..nthreads {
+        let (tx, rx) = sync_channel::<WordBatch>(4);
+        batch_senders.push(tx);
+        batch_receivers.push(rx);
+    }
+
+    let maps: Vec<WordCounter> = std::thread::scope(|s| {
+        let owners: Vec<_> = batch_receivers
+            .into_iter()
+            .map(|rx| {
                 s.spawn(move || {
-                    let mut map: FxHashMap<String, u64> = FxHashMap::default();
-                    loop {
-                        let chunk = rx.lock().unwrap().recv();
-                        let Ok(chunk) = chunk else { break };
-                        let text = std::str::from_utf8(&chunk)
-                            .unwrap_or_else(|e| die(&format!("input is not UTF-8: {e}")));
-                        for w in text.split_whitespace() {
-                            match map.get_mut(w) {
-                                Some(c) => *c += 1,
-                                None => {
-                                    map.insert(w.to_owned(), 1);
-                                }
-                            }
+                    let mut map = WordCounter::new();
+                    while let Ok(batch) = rx.recv() {
+                        for (word, hash) in batch.iter() {
+                            map.add_hashed(word, hash, 1);
                         }
                     }
                     map
@@ -66,6 +91,43 @@ fn count_words_parallel(paths: &[String], nthreads: usize) -> Vec<(String, u64)>
             })
             .collect();
 
+        let scanners: Vec<_> = (0..nthreads)
+            .map(|_| {
+                let chunk_rx = Arc::clone(&chunk_rx);
+                let batch_senders = batch_senders.clone();
+                s.spawn(move || {
+                    let nshards = nthreads as u64;
+                    let mut batches: Vec<WordBatch> =
+                        (0..nthreads).map(|_| WordBatch::new()).collect();
+                    loop {
+                        let chunk = chunk_rx.lock().unwrap().recv();
+                        let Ok(chunk) = chunk else { break };
+                        let text = std::str::from_utf8(&chunk)
+                            .unwrap_or_else(|e| die(&format!("input is not UTF-8: {e}")));
+                        gigatrain::split::for_each_word(text, |w| {
+                            let h = gigatrain::counter::hash_word(w);
+                            // Route on the high bits: the low bits pick the
+                            // hash-map bucket, so reusing them here would
+                            // leave each shard's index sparsely populated.
+                            let shard = ((h >> 32) % nshards) as usize;
+                            batches[shard].push(w, h);
+                            if batches[shard].bytes() >= BATCH_BYTES {
+                                let full = std::mem::take(&mut batches[shard]);
+                                let _ = batch_senders[shard].send(full);
+                            }
+                        });
+                    }
+                    for (shard, batch) in batches.into_iter().enumerate() {
+                        if !batch.is_empty() {
+                            let _ = batch_senders[shard].send(batch);
+                        }
+                    }
+                })
+            })
+            .collect();
+        drop(batch_senders);
+
+        let tx = chunk_tx;
         for path in paths {
             let mut file = std::fs::File::open(path)
                 .unwrap_or_else(|e| die(&format!("opening {path}: {e}")));
@@ -86,7 +148,7 @@ fn count_words_parallel(paths: &[String], nthreads: usize) -> Vec<(String, u64)>
                 let eof = filled < start + CHUNK;
                 if eof {
                     if !buf.is_empty() {
-                        tx.send(buf).unwrap();
+                        tx.send(Arc::new(buf)).unwrap();
                     }
                     break;
                 }
@@ -98,7 +160,7 @@ fn count_words_parallel(paths: &[String], nthreads: usize) -> Vec<(String, u64)>
                     Some(cut) => {
                         carry.extend_from_slice(&buf[cut + 1..]);
                         buf.truncate(cut + 1);
-                        tx.send(buf).unwrap();
+                        tx.send(Arc::new(buf)).unwrap();
                     }
                     None => {
                         // No boundary in the whole chunk (pathological token):
@@ -109,23 +171,27 @@ fn count_words_parallel(paths: &[String], nthreads: usize) -> Vec<(String, u64)>
             }
         }
         drop(tx);
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
+        for scanner in scanners {
+            scanner.join().unwrap();
+        }
+        owners.into_iter().map(|h| h.join().unwrap()).collect()
     });
+    gigatrain::rss::report("phase 1 shard counters");
 
-    let mut index: FxHashMap<String, usize> = FxHashMap::default();
-    let mut word_counts: Vec<(String, u64)> = vec![];
-    for map in maps {
-        for (word, count) in map {
-            match index.get(&word) {
-                Some(&i) => word_counts[i].1 += count,
-                None => {
-                    index.insert(word.clone(), word_counts.len());
-                    word_counts.push((word, count));
-                }
-            }
+    // Shards are disjoint, so combining is concatenation: no lookups, no
+    // dedup. Each shard's index and arena are freed as it is consumed.
+    let mut maps = maps;
+    let total_words: usize = maps.iter().map(|m| m.len()).sum();
+    let total_bytes: usize = maps.iter().map(|m| m.total_bytes()).sum();
+    let mut table = WordTable::with_capacity(total_words, total_bytes);
+    for map in maps.drain(..) {
+        let shard = map.into_table();
+        for i in 0..shard.len() {
+            table.push(shard.word(i), shard.count(i));
         }
     }
-    word_counts
+    gigatrain::rss::report("combining shards");
+    table
 }
 
 fn main() {
@@ -165,11 +231,10 @@ fn main() {
     });
 
     let t0 = Instant::now();
-    let word_counts: Vec<(String, u64)> = if let Some(path) = &words_tsv {
+    let word_table: WordTable = if let Some(path) = &words_tsv {
         let data = std::fs::read_to_string(path)
             .unwrap_or_else(|e| die(&format!("reading {path}: {e}")));
-        let mut index: FxHashMap<String, usize> = FxHashMap::default();
-        let mut word_counts: Vec<(String, u64)> = vec![];
+        let mut acc = WordCounter::new();
         for line in data.lines() {
             if line.is_empty() {
                 continue;
@@ -177,16 +242,9 @@ fn main() {
             let (word, count) = line
                 .rsplit_once('\t')
                 .unwrap_or_else(|| die(&format!("bad TSV line: {line:?}")));
-            let count: u64 = count.parse().unwrap();
-            match index.get(word) {
-                Some(&i) => word_counts[i].1 += count,
-                None => {
-                    index.insert(word.to_string(), word_counts.len());
-                    word_counts.push((word.to_string(), count));
-                }
-            }
+            acc.add(word, count.parse().unwrap());
         }
-        word_counts
+        acc.into_table()
     } else {
         if inputs.is_empty() {
             die("no input files (or --words-tsv) given");
@@ -194,9 +252,11 @@ fn main() {
         count_words_parallel(&inputs, nthreads)
     };
     let t_phase1 = t0.elapsed();
+    let word_count = word_table.len();
+    gigatrain::rss::report("phase 1 total");
 
     let t1 = Instant::now();
-    let result = train(&word_counts, &config);
+    let result = train(word_table, &config);
     let t_phase2 = t1.elapsed();
 
     let stdout = std::io::stdout();
@@ -208,7 +268,7 @@ fn main() {
 
     eprintln!(
         "unique words: {}  vocab: {}  merges: {}  threads: {}  phase1: {:.2?}  phase2: {:.2?}",
-        word_counts.len(),
+        word_count,
         result.vocab.len(),
         result.merges.len(),
         nthreads,
