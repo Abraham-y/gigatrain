@@ -112,15 +112,27 @@ fn push_pos(pos: &mut Vec<u32>, i: u32) {
 /// Takes the table by value so word strings can be freed once tokenized,
 /// before the merge loop — they are dead weight from that point on.
 pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
+    let t_start = std::time::Instant::now();
+    let mut stage = t_start;
+    let mut lap = |name: &str| {
+        if crate::rss::enabled() {
+            let now = std::time::Instant::now();
+            eprintln!("  phase2 {name}: {:.2?}", now.duration_since(stage));
+            stage = now;
+        }
+    };
     let max_token_length = config.max_token_length.unwrap_or(usize::MAX);
 
     let mut word_to_id: FxHashMap<String, u32> = FxHashMap::default();
     let mut id_to_word: Vec<String> = Vec::with_capacity(config.vocab_size);
+    // Char count per token ID; equals HF's per-symbol `len` (see word.rs).
+    let mut token_chars: Vec<u32> = Vec::with_capacity(config.vocab_size);
 
     // 1. Special tokens, in order, deduplicated.
     for token in &config.special_tokens {
         if !word_to_id.contains_key(token) {
             id_to_word.push(token.clone());
+            token_chars.push(token.chars().count() as u32);
             word_to_id.insert(token.clone(), (id_to_word.len() - 1) as u32);
         }
     }
@@ -157,10 +169,13 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
             let s = c.to_string();
             if !word_to_id.contains_key(&s) {
                 id_to_word.push(s.clone());
+                token_chars.push(1);
                 word_to_id.insert(s, (id_to_word.len() - 1) as u32);
             }
         }
     }
+
+    lap("alphabet");
 
     // Fast char -> id view of the vocab (valid because we support no
     // continuing_subword_prefix/end_of_word_suffix, so tokenization only
@@ -187,6 +202,7 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
         counts.push(count);
         words.push_word(word.chars().filter_map(|c| char_to_id.get(&c).copied()));
     }
+    lap("tokenize");
     crate::rss::report("tokenize (word strings still held)");
     drop(word_table);
     crate::rss::report("dropping word strings");
@@ -196,12 +212,13 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
     let mut where_to_update: FxHashMap<Pair, Vec<u32>> = FxHashMap::default();
     for i in 0..words.len() {
         for win in words.symbols_of(i).windows(2) {
-            let pair = (win[0].c, win[1].c);
+            let pair = (win[0], win[1]);
             *pair_counts.entry(pair).or_default() += counts[i] as i64;
             push_pos(where_to_update.entry(pair).or_default(), i as u32);
         }
     }
 
+    lap("initial pair count");
     if std::env::var_os("GIGATRAIN_STATS").is_some() {
         let symbols = (0..words.len()).map(|i| words.symbols_of(i).len()).sum::<usize>();
         let pos_entries: usize = where_to_update.values().map(|v| v.len()).sum();
@@ -210,7 +227,7 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
             "stats: words={} symbols={} ({} MB) pairs={} ({} MB) pos_entries={} pos_cap={} ({} MB incl. Vec headers)",
             words.len(),
             symbols,
-            symbols * std::mem::size_of::<crate::word::Symbol>() / (1 << 20),
+            symbols * 4 / (1 << 20),
             pair_counts.len(),
             pair_counts.len() * 20 / (1 << 20),
             pos_entries,
@@ -263,6 +280,7 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
             .unwrap_or(id_to_word.len() as u32);
         if !word_to_id.contains_key(&new_token) {
             id_to_word.push(new_token.clone());
+            token_chars.push(token_chars[top.pair.0 as usize] + token_chars[top.pair.1 as usize]);
             word_to_id.insert(new_token, new_token_id);
         }
         merges.push((top.pair, new_token_id));
@@ -277,6 +295,7 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
                 top.pair.1,
                 new_token_id,
                 max_token_length,
+                &token_chars,
                 &mut changes,
             );
             for &(pair, change) in &changes {
@@ -298,6 +317,8 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
             }
         }
     }
+
+    lap("merge loop");
 
     TrainResult {
         vocab: id_to_word,
