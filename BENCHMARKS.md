@@ -127,6 +127,51 @@ representation with position-indexed occurrences, replacing the full-word
 rescan per merge; it is a real win on paper but a parity risk, so it belongs
 in its own change with heavy fuzzing.
 
+## Validation on 64-core Linux (Modal)
+
+Run with `modal run scripts/modal_benchmark.py --sizes 100,1000 --cpu 64`.
+x86-64 Linux, 64 cores, 192 GiB, glibc. Wall time / peak RSS, vocab 32000.
+
+| corpus | gigatrain (ByteLevel) | rustbpe | SentencePiece | HF |
+|---|---|---|---|---|
+| 100 MB | **2.6 s / 608 MB** | 10.4 s (3.9x) | 15.5 s (5.9x) | 181.0 s (68.8x) |
+| 1 GB | **7.4 s / 1570 MB** | 88.2 s (11.9x) | 112.7 s (15.2x) | 244.4 s (33.1x) |
+
+Two things this settles.
+
+**The advantage is not an Apple Silicon artifact.** The ratios hold or widen
+on x86-64 Linux: rustbpe 9.5x -> 11.9x at 1 GB, SentencePiece 13x -> 15.2x.
+
+**HuggingFace degrades badly with core count.** On the 10-core laptop HF took
+9.7 s on 100 MB; on 64 cores it took **181 s**, nearly 19x slower on better
+hardware. At 1 GB it went 61.2 s -> 244.4 s. This is the pathology reported in
+issue #1313 (256 threads, unfinished after 10 h) reproduced directly: HF's
+rayon-parallel pair counting reduces per-thread hash maps, so more cores means
+more merging work, not less. It is the strongest argument for this project,
+and it only appears on hardware the laptop could not simulate.
+
+### Thread scaling, and a real bug it exposed
+
+Sizing scanners and owners each at `nthreads` put ~2x the core count on the
+CPU. On 10 cores that was inside the noise — an earlier attempt to fix it was
+reverted for lack of evidence. On 64 cores it is unmistakable:
+
+| threads | before (scanners=owners=N) | after (split budget) |
+|---|---|---|
+| 16 | 5.71 s / 604 MB | 5.3 s / 505 MB |
+| 32 | 5.51 s / 729 MB | 4.8 s / 534 MB |
+| 48 | 6.31 s / 958 MB | 4.7 s / 567 MB |
+| 64 | 7.16 s / 1384 MB | **4.9 s / 638 MB** |
+| 96 | 8.25 s / 1804 MB | 5.2 s / 760 MB |
+
+Before, throughput peaked at 32 threads and got *worse* with more cores, with
+peak RSS climbing to 1.8 GB. After splitting the budget between the two pools,
+the curve is flat from 32 to 96. At the default on a 64-core box that is
+**1.46x faster and 2.2x less memory**.
+
+`--threads N` now means N workers total, split between the pools, rather than
+N of each.
+
 ## Remaining optimization candidates
 
 Phase 1 is now ~83% of the ByteLevel runtime (70.6 s of 85 s at 12.9 GB), so

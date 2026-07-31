@@ -27,6 +27,10 @@ struct Sizing {
     batch: usize,
     /// Number of reader threads (each takes a byte range).
     readers: usize,
+    /// Threads splitting and routing (CPU bound).
+    scanners: usize,
+    /// Threads counting their shard (memory bound). Also the shard count.
+    owners: usize,
 }
 
 impl Sizing {
@@ -52,11 +56,27 @@ impl Sizing {
             .clamp(1, 8)
             .min((total_bytes / (64 << 20)).max(1) as usize);
 
+        // Scanners and owners run concurrently, so sizing both at `nthreads`
+        // puts ~2x the core count on the CPU (plus readers). Measured on a
+        // 64-core Linux box, 1 GB ByteLevel: 5.51 s at 32 threads against
+        // 7.16 s at 64 and 8.25 s at 96, with peak RSS climbing 729 MB ->
+        // 1384 MB -> 1804 MB. Splitting the budget puts the default at the
+        // measured optimum rather than past it.
+        //
+        // `nthreads` is the worker budget and is split between the two pools,
+        // so `--threads 64` really does run 64 workers rather than 128. A
+        // pipeline needs at least one of each, so `--threads 1` still spawns
+        // two.
+        let scanners = (nthreads / 2).max(1);
+        let owners = nthreads.saturating_sub(scanners).max(1);
+
         Sizing {
             chunk,
             chunk_queue,
             batch,
             readers,
+            scanners,
+            owners,
         }
     }
 }
@@ -93,6 +113,7 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
         .map(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
         .sum();
     let sizing = Sizing::plan(total_bytes, nthreads);
+    let nshards_u64 = sizing.owners as u64;
     // HF's trainer pretokenizes files one line at a time, and under ByteLevel
     // a line's trailing newline is content that belongs to that line. Chunks
     // must therefore hold whole lines (see reader::CutRule).
@@ -104,21 +125,22 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
     let batch_bytes = sizing.batch;
     if crate::rss::enabled() {
         eprintln!(
-            "sizing: chunk={}KB queue={} batch={}KB readers={} shards={}",
+            "sizing: chunk={}KB queue={} batch={}KB readers={} scanners={} owners={}",
             sizing.chunk >> 10,
             sizing.chunk_queue,
             sizing.batch >> 10,
             sizing.readers,
-            nthreads,
+            sizing.scanners,
+            sizing.owners,
         );
     }
 
     let (chunk_tx, chunk_rx) = sync_channel::<Arc<Vec<u8>>>(sizing.chunk_queue);
     let chunk_rx = Arc::new(Mutex::new(chunk_rx));
 
-    let mut batch_senders = Vec::with_capacity(nthreads);
-    let mut batch_receivers = Vec::with_capacity(nthreads);
-    for _ in 0..nthreads {
+    let mut batch_senders = Vec::with_capacity(sizing.owners);
+    let mut batch_receivers = Vec::with_capacity(sizing.owners);
+    for _ in 0..sizing.owners {
         let (tx, rx) = sync_channel::<WordBatch>(4);
         batch_senders.push(tx);
         batch_receivers.push(rx);
@@ -140,14 +162,14 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
             })
             .collect();
 
-        let scanners: Vec<_> = (0..nthreads)
+        let scanners: Vec<_> = (0..sizing.scanners)
             .map(|_| {
                 let chunk_rx = Arc::clone(&chunk_rx);
                 let batch_senders = batch_senders.clone();
                 s.spawn(move || {
-                    let nshards = nthreads as u64;
+                    let nshards = nshards_u64;
                     let mut batches: Vec<WordBatch> =
-                        (0..nthreads).map(|_| WordBatch::new()).collect();
+                        (0..nshards as usize).map(|_| WordBatch::new()).collect();
                     loop {
                         let chunk = chunk_rx.lock().unwrap().recv();
                         let Ok(chunk) = chunk else { break };
