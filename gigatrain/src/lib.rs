@@ -2,11 +2,16 @@ pub mod batch;
 pub mod bytelevel;
 pub mod counter;
 pub mod fxhash;
+pub mod pipeline;
 pub mod reader;
 pub mod rss;
 pub mod split;
+pub mod tokenizer_json;
 pub mod trainer;
 pub mod unicode_tables;
+#[cfg(feature = "python")]
+mod python;
+
 pub mod word;
 pub mod wordtable;
 

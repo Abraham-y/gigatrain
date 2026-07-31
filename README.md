@@ -98,6 +98,33 @@ must be reproduced.
 
 ## Usage
 
+### Python
+
+```bash
+pip install maturin
+maturin build --release --features python --manifest-path gigatrain/Cargo.toml
+pip install --find-links gigatrain/target/wheels gigatrain
+```
+
+```python
+import gigatrain
+
+# Writes a tokenizer.json that tokenizers.Tokenizer.from_file() loads and
+# that encodes identically to a HuggingFace-trained tokenizer.
+gigatrain.train_tokenizer(
+    ["corpus.txt"], vocab_size=32000, output="tokenizer.json",
+    pretokenizer="bytelevel", special_tokens=["<|endoftext|>"],
+)
+
+# Or get the vocab and merges directly.
+vocab, merges = gigatrain.train_bpe(["corpus.txt"], vocab_size=32000)
+```
+
+Keyword arguments mirror `BpeTrainer`: `special_tokens`, `min_frequency`,
+`max_token_length`, `limit_alphabet`, plus `pretokenizer` and `threads`.
+
+### CLI
+
 ```bash
 cargo build --release --manifest-path gigatrain/Cargo.toml
 
@@ -152,8 +179,8 @@ expects to be the memory hazard was 1 MB.
 - **Phase 2 is the ceiling.** The merge loop is ~75% of runtime and
   sequential by construction, so more cores do not help it.
 - **Scope.** Whitespace and ByteLevel pretokenization; no
-  `continuing_subword_prefix` / `end_of_word_suffix`; no PyO3 bindings yet,
-  so it is a CLI rather than a drop-in `BpeTrainer` replacement.
+  `continuing_subword_prefix` / `end_of_word_suffix`. Wheels are not published
+  to PyPI, so installation is a local `maturin build`.
 
 ## Prior art
 

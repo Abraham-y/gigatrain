@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "gigatrain"
+description = "Fast BPE tokenizer trainer with byte-exact HuggingFace tokenizers parity"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.8"
+keywords = ["bpe", "tokenizer", "nlp", "training", "tokenization"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Text Processing :: Linguistic",
+    "License :: OSI Approved :: Apache Software License",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/Abraham-y/gigatrain"
+
+[tool.maturin]
+features = ["python"]
+# The extension module is the crate lib; the CLI binary is not shipped in the
+# wheel.
+bindings = "pyo3"

@@ -5,11 +5,22 @@ edition = "2021"
 rust-version = "1.82"
 description = "Fast BPE tokenizer trainer with byte-exact HuggingFace tokenizers parity"
 license = "Apache-2.0"
-readme = "../README.md"
+readme = "README.md"
 keywords = ["bpe", "tokenizer", "nlp", "training", "tokenization"]
 categories = ["text-processing", "science"]
 
+[lib]
+name = "gigatrain"
+# cdylib for the Python extension module; rlib so the CLI and tests still link.
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+# Optional so the core crate stays dependency-free; enabled by the `python`
+# feature, which is what maturin builds.
+pyo3 = { version = "0.27", features = ["extension-module"], optional = true }
+
+[features]
+python = ["dep:pyo3"]
 
 [profile.release]
 lto = true

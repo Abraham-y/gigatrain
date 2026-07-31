@@ -48,3 +48,20 @@ jobs:
           python-version: '3.12'
       - run: pip install tokenizers==0.22.2
       - run: bash scripts/run_parity_ci.sh
+
+  # The Python bindings must produce a tokenizer.json that HF loads and that
+  # encodes identically - that is what makes this a drop-in rather than a
+  # merge-list generator.
+  bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install tokenizers==0.22.2 maturin
+      - run: maturin build --release --features python --manifest-path gigatrain/Cargo.toml
+      - run: pip install --find-links gigatrain/target/wheels gigatrain
+      - run: curl -sL -o /tmp/wp.txt https://www.gutenberg.org/files/2600/2600-0.txt
+      - run: python scripts/check_bindings.py /tmp/wp.txt
