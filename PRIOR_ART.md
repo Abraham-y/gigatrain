@@ -42,9 +42,45 @@ Where gigatrain still differs (verified by reading the source):
 | word representation | `Vec<u32>` symbols per word | one flat arena of `u32` for all words |
 | known debt | `TODO(perf)`: *"a lot of contention on this map early in merging"* | — |
 
-Whether gigatoken's trainer survives a 12.9 GB corpus is **unverified** — it
-is an inference from the monotonically growing index, and should be measured
-before being claimed.
+**Correction (2026-07-31): gigatoken's trainer was measured, and the earlier
+inference here was wrong.** This file previously guessed, from its
+monotonically growing `BTreeSet` index and `Vec::remove`, that it "will very
+likely not survive 12.9 GB". It is in fact fast and memory-efficient — by a
+wide margin the closest competitor:
+
+| corpus | gigatoken | gigatrain (ByteLevel) |
+|---|---|---|
+| 100 MB | 5.26 s / 259 MB | 3.07 s / 216 MB |
+| 1 GB | 18.76 s / 1166 MB | 10.22 s / 683 MB |
+
+(10-core macOS; gigatoken's figure is its own reported train time, which
+excludes process startup, so if anything it flatters gigatoken.) So
+gigatrain is **~1.8x faster on ~1.7x less memory** — not the order of
+magnitude that separates it from rustbpe, SentencePiece and HF.
+
+**Where gigatoken's parity actually breaks.** Its merges were compared
+against HF's `BpeTrainer` rank-for-rank, after mapping its raw bytes through
+the byte-to-unicode table:
+
+| corpus | line endings | identical at same rank |
+|---|---|---|
+| FineWeb sample | LF | **2744 / 2744** (its full output) |
+| War and Peace | CRLF | **21 / 2744**, diverging at rank 0 |
+
+On LF corpora it matches HF exactly. On CRLF corpora it diverges at the very
+first merge: HF's trainer feeds files a line at a time, so a trailing `\r\n`
+is terminal within its line and yields the token `čĊ` — HF's rank-0 merge.
+gigatoken pretokenizes whole-text and never forms it (5450 unique pretokens
+against HF's 5441 on the same file).
+
+That is the same trap documented in PARITY.md and caught by this project's CI,
+which trains on a CRLF corpus precisely because of it. gigatoken's own parity
+test uses in-memory synthetic sentences at ~120 KB, where the case cannot
+arise.
+
+So the honest comparison with gigatoken is: **faster and leaner, but not by an
+order of magnitude; the real difference is parity scope and validation
+scale.**
 
 **2. The "core algorithmic insight" is the status quo.**
 
