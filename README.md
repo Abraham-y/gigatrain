@@ -3,10 +3,10 @@
 Fast BPE tokenizer **training** with byte-exact HuggingFace `tokenizers`
 parity.
 
-Trains a 32k vocabulary on **12.9 GB of FineWeb in 85 seconds** using 2.2 GB
-of RAM on a 10-core laptop, producing a merge list byte-identical to
-`tokenizers.trainers.BpeTrainer`. HuggingFace does not finish the same job in
-an hour on the same machine.
+Trains a 32k vocabulary on **12.9 GB of FineWeb in 44 seconds** using 2.7 GB
+of RAM (64-core Linux), producing a merge list byte-identical to
+`tokenizers.trainers.BpeTrainer`. On the same machine and corpus HuggingFace
+takes 12.6 minutes and 29.8 GB, and SentencePiece segfaults.
 
 Supports both whitespace and **ByteLevel (GPT-2 regex)** pretokenization, the
 latter verified against HF over every non-surrogate BMP codepoint.

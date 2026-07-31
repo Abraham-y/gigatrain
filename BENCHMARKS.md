@@ -127,6 +127,39 @@ representation with position-indexed occurrences, replacing the full-word
 rescan per merge; it is a real win on paper but a parity risk, so it belongs
 in its own change with heavy fuzzing.
 
+## The 12.9 GB comparison, on hardware that can hold it
+
+64-core x86-64 Linux, 192 GiB, glibc, vocab 32000. This is the run the laptop
+could not do: with enough RAM, HuggingFace and SentencePiece are no longer
+swap-bound, so these are real timings rather than "it thrashed".
+
+| trainer | wall | peak RSS | vs gigatrain | outcome |
+|---|---|---|---|---|
+| **gigatrain (ByteLevel)** | **43.8 s** | **2.7 GB** | — | ok |
+| gigatrain (whitespace) | 129.4 s | 6.7 GB | 3.0x | ok |
+| SentencePiece v0.2.2 | 135.0 s | 20.0 GB | — | **SIGSEGV** |
+| HuggingFace | 754.9 s | 29.8 GB | **17.2x** | ok |
+| rustbpe | 975.4 s | 5.3 GB | **22.3x** | ok |
+
+Three things worth stating plainly.
+
+**HuggingFace does finish, given 192 GiB** — in 12.6 minutes, using 29.8 GB of
+resident memory, 11x more than gigatrain. On a 34 GB laptop the same job never
+completed in an hour. So the honest claim is not "HF cannot do this"; it is
+that HF needs roughly an order of magnitude more memory and 17x the time.
+
+**SentencePiece crashed.** It ran 135 s and died with SIGSEGV (rc=139) at
+20 GB resident, having been given 192 GiB. This matches the segfault reported
+in sentencepiece#862 on a 98 GB corpus. It is a crash, not a timeout.
+
+**rustbpe is the memory winner.** At 5.3 GB it uses *less* than gigatrain's
+whitespace mode, though about twice gigatrain's ByteLevel mode — while taking
+22x longer. If memory were the only axis it would be a genuine contender.
+
+Note the pretokenizer gap widens with scale: ByteLevel is 3x faster than
+whitespace here, because it yields far fewer unique pretokens (9.0M vs 27.4M)
+and phase 2 scales with that.
+
 ## Validation on 64-core Linux (Modal)
 
 Run with `modal run scripts/modal_benchmark.py --sizes 100,1000 --cpu 64`.
