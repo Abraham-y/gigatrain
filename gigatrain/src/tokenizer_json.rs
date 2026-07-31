@@ -39,7 +39,13 @@ fn quoted(s: &str, out: &mut String) {
 /// `special_tokens` are emitted as added tokens so they survive a round trip,
 /// and `bytelevel` selects the matching pre_tokenizer/decoder so the file is
 /// usable for encoding, not just inspection.
-pub fn render(result: &TrainResult, special_tokens: &[String], bytelevel: bool) -> String {
+pub fn render(
+    result: &TrainResult,
+    special_tokens: &[String],
+    bytelevel: bool,
+    continuing_subword_prefix: Option<&str>,
+    end_of_word_suffix: Option<&str>,
+) -> String {
     let mut s = String::with_capacity(result.vocab.len() * 24);
     s.push_str("{\n  \"version\": \"1.0\",\n  \"truncation\": null,\n  \"padding\": null,\n");
 
@@ -81,7 +87,19 @@ pub fn render(result: &TrainResult, special_tokens: &[String], bytelevel: bool) 
 
     s.push_str("  \"model\": {\n    \"type\": \"BPE\",\n");
     s.push_str("    \"dropout\": null,\n    \"unk_token\": null,\n");
-    s.push_str("    \"continuing_subword_prefix\": null,\n    \"end_of_word_suffix\": null,\n");
+    for (field, value) in [
+        ("continuing_subword_prefix", continuing_subword_prefix),
+        ("end_of_word_suffix", end_of_word_suffix),
+    ] {
+        s.push_str("    \"");
+        s.push_str(field);
+        s.push_str("\": ");
+        match value {
+            Some(v) => quoted(v, &mut s),
+            None => s.push_str("null"),
+        }
+        s.push_str(",\n");
+    }
     s.push_str("    \"fuse_unk\": false,\n    \"byte_fallback\": false,\n");
     s.push_str("    \"ignore_merges\": false,\n");
 

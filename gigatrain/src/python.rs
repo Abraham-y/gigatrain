@@ -19,12 +19,15 @@ fn resolve_threads(threads: Option<usize>) -> usize {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_config(
     vocab_size: usize,
     special_tokens: Vec<String>,
     min_frequency: u64,
     max_token_length: Option<usize>,
     limit_alphabet: Option<usize>,
+    continuing_subword_prefix: Option<String>,
+    end_of_word_suffix: Option<String>,
 ) -> TrainerConfig {
     TrainerConfig {
         vocab_size,
@@ -33,6 +36,8 @@ fn build_config(
         limit_alphabet,
         initial_alphabet: vec![],
         max_token_length,
+        continuing_subword_prefix,
+        end_of_word_suffix,
     }
 }
 
@@ -61,6 +66,8 @@ fn parse_pretokenizer(name: &str) -> PyResult<bool> {
     limit_alphabet = None,
     pretokenizer = "whitespace".to_string(),
     threads = None,
+    continuing_subword_prefix = None,
+    end_of_word_suffix = None,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn train_bpe(
@@ -73,6 +80,8 @@ fn train_bpe(
     limit_alphabet: Option<usize>,
     pretokenizer: String,
     threads: Option<usize>,
+    continuing_subword_prefix: Option<String>,
+    end_of_word_suffix: Option<String>,
 ) -> PyResult<(Py<PyDict>, Vec<(String, String)>)> {
     let bytelevel = parse_pretokenizer(&pretokenizer)?;
     let config = build_config(
@@ -81,6 +90,8 @@ fn train_bpe(
         min_frequency,
         max_token_length,
         limit_alphabet,
+        continuing_subword_prefix.clone(),
+        end_of_word_suffix.clone(),
     );
     let nthreads = resolve_threads(threads);
 
@@ -113,6 +124,8 @@ fn train_bpe(
     limit_alphabet = None,
     pretokenizer = "whitespace".to_string(),
     threads = None,
+    continuing_subword_prefix = None,
+    end_of_word_suffix = None,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn train_tokenizer(
@@ -126,22 +139,34 @@ fn train_tokenizer(
     limit_alphabet: Option<usize>,
     pretokenizer: String,
     threads: Option<usize>,
+    continuing_subword_prefix: Option<String>,
+    end_of_word_suffix: Option<String>,
 ) -> PyResult<()> {
     let bytelevel = parse_pretokenizer(&pretokenizer)?;
     let specials = special_tokens.clone();
+    let prefix_for_json = continuing_subword_prefix.clone();
+    let suffix_for_json = end_of_word_suffix.clone();
     let config = build_config(
         vocab_size,
         special_tokens,
         min_frequency,
         max_token_length,
         limit_alphabet,
+        continuing_subword_prefix.clone(),
+        end_of_word_suffix.clone(),
     );
     let nthreads = resolve_threads(threads);
 
     let json = py.detach(move || {
         let table = crate::pipeline::count_words(&files, nthreads, bytelevel);
         let result = train(table, &config);
-        crate::tokenizer_json::render(&result, &specials, bytelevel)
+        crate::tokenizer_json::render(
+            &result,
+            &specials,
+            bytelevel,
+            prefix_for_json.as_deref(),
+            suffix_for_json.as_deref(),
+        )
     });
 
     std::fs::write(&output, json)
