@@ -1,0 +1,98 @@
+name: Release
+
+# Builds wheels for every supported platform and publishes them to PyPI.
+#
+# Publishing is deliberately manual: it fires on a version tag, so shipping is
+# `git tag v0.1.0 && git push --tags` rather than a side effect of merging.
+# Building ad-hoc wheels on one developer's laptop would ship macOS-arm64 only.
+#
+# PyPI auth uses Trusted Publishing (OIDC), so no API token has to be stored
+# in the repository. Configure it once at
+# https://pypi.org/manage/project/gigatrain/settings/publishing/ with:
+#   owner=Abraham-y  repo=gigatrain  workflow=release.yml  environment=pypi
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: wheels (${{ matrix.platform.target }} on ${{ matrix.platform.runner }})
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { runner: ubuntu-latest,  target: x86_64 }
+          - { runner: ubuntu-latest,  target: aarch64 }
+          - { runner: macos-latest,   target: aarch64 }
+          - { runner: macos-13,       target: x86_64 }
+          - { runner: windows-latest, target: x64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          # abi3 is not enabled, so build one wheel per supported interpreter.
+          args: >-
+            --release --features python
+            --manifest-path gigatrain/Cargo.toml
+            --interpreter 3.9 3.10 3.11 3.12 3.13
+          manylinux: auto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform.runner }}-${{ matrix.platform.target }}
+          path: gigatrain/target/wheels/*.whl
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --manifest-path gigatrain/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: gigatrain/target/wheels/*.tar.gz
+
+  # Smoke-test a built wheel before anything is published: install it on a
+  # clean runner and check it still produces a tokenizer.json that HF loads.
+  verify:
+    needs: [wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-ubuntu-latest-x86_64
+          path: dist
+      - run: pip install tokenizers==0.22.2 && pip install --no-index --find-links dist gigatrain
+      - run: curl -sL -o /tmp/wp.txt https://www.gutenberg.org/files/2600/2600-0.txt
+      - run: python scripts/check_bindings.py /tmp/wp.txt
+
+  publish:
+    needs: [wheels, sdist, verify]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

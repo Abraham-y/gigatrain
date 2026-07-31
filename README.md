@@ -186,8 +186,10 @@ landed, phase 1 — not the merge loop — became ~83% of runtime.
   run is ~99.6% of merges, which is as close as a deterministic trainer can
   get to a moving target. Byte-exact parity is claimed only for the
   undecorated modes.
-- **Scope.** No Unigram/SentencePiece model. No published PyPI wheels yet, so
-  installation means a local `maturin build`.
+- **Scope.** No Unigram/SentencePiece model. Wheels are built for Linux,
+  macOS and Windows by `.github/workflows/release.yml` on a version tag, but
+  nothing is published to PyPI yet, so installation means a local
+  `maturin build`.
 - **Parity is against `tokenizers` 0.22.2**, pinned in CI. HF also has an open
   `i32` count-overflow bug
   ([#2058](https://github.com/huggingface/tokenizers/issues/2058)); this crate
