@@ -219,8 +219,7 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
                     let Some((path, start, end)) = jobs.get(i) else {
                         break;
                     };
-                    if let Err(e) =
-                        crate::reader::read_range(path, *start, *end, chunk, rule, &tx)
+                    if let Err(e) = crate::reader::read_range(path, *start, *end, chunk, rule, &tx)
                     {
                         die(&e);
                     }
