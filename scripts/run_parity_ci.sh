@@ -93,6 +93,19 @@ for t in 1 2 3 7 16; do
 done
 echo "  identical across 1,2,3,7,16 threads ($(wc -l < "$WORK/threads_ref.merges") merges)"
 
+echo "== determinism: decorated modes must be reproducible =="
+# HF is non-deterministic with continuing_subword_prefix/end_of_word_suffix
+# (see PARITY.md), so these modes are checked for self-consistency rather
+# than against HF.
+for mode in "--wordpiece" "--end-of-word-suffix </w>"; do
+  ref=$($GT --vocab-size 2000 $mode "$WORK/war_and_peace.txt" 2>/dev/null | shasum | cut -d' ' -f1)
+  for t in 1 4 16; do
+    got=$($GT --vocab-size 2000 $mode --threads $t "$WORK/war_and_peace.txt" 2>/dev/null | shasum | cut -d' ' -f1)
+    [ "$ref" = "$got" ] || { echo "FAIL: $mode output differs at --threads $t"; exit 1; }
+  done
+  echo "  $mode reproducible across 1,4,16 threads"
+done
+
 echo "== fuzz: 1000 random word tables =="
 "$PYTHON" scripts/parity_fuzz.py --trials 1000 --seed 7
 

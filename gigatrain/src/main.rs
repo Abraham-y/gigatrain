@@ -12,6 +12,9 @@
 //!   --limit-alphabet N
 //!   --threads N             (default: all cores)
 //!   --pretokenizer MODE     whitespace (default) or bytelevel
+//!   --continuing-subword-prefix S   e.g. "##" (WordPiece)
+//!   --end-of-word-suffix S          e.g. "</w>"
+//!   --wordpiece             shorthand for --continuing-subword-prefix "##"
 //!   --words-tsv FILE        word<TAB>count table instead of raw text
 //!
 //! Raw text mode pretokenizes with whitespace splitting, byte-for-byte
@@ -61,6 +64,12 @@ fn main() {
                     )),
                 }
             }
+            "--continuing-subword-prefix" => {
+                config.continuing_subword_prefix = Some(val("--continuing-subword-prefix"))
+            }
+            "--end-of-word-suffix" => config.end_of_word_suffix = Some(val("--end-of-word-suffix")),
+            // HF's WordPieceTrainer is exactly BpeTrainer with this prefix.
+            "--wordpiece" => config.continuing_subword_prefix = Some("##".to_string()),
             "--words-tsv" => words_tsv = Some(val("--words-tsv")),
             _ if arg.starts_with("--") => die(&format!("unknown flag {arg}")),
             _ => inputs.push(arg),

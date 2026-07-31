@@ -37,6 +37,10 @@ def hf_train(files, args):
         kwargs["max_token_length"] = args.max_token_length
     if args.limit_alphabet is not None:
         kwargs["limit_alphabet"] = args.limit_alphabet
+    if args.continuing_subword_prefix is not None:
+        kwargs["continuing_subword_prefix"] = args.continuing_subword_prefix
+    if args.end_of_word_suffix is not None:
+        kwargs["end_of_word_suffix"] = args.end_of_word_suffix
     trainer = trainers.BpeTrainer(**kwargs)
     t0 = time.perf_counter()
     tok.train(files, trainer)
@@ -60,6 +64,10 @@ def gigatrain_train(files, args):
         cmd += ["--limit-alphabet", str(args.limit_alphabet)]
     if args.pretokenizer == "bytelevel":
         cmd += ["--pretokenizer", "bytelevel"]
+    if args.continuing_subword_prefix is not None:
+        cmd += ["--continuing-subword-prefix", args.continuing_subword_prefix]
+    if args.end_of_word_suffix is not None:
+        cmd += ["--end-of-word-suffix", args.end_of_word_suffix]
     cmd += files
     t0 = time.perf_counter()
     proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -83,6 +91,8 @@ def main():
     p.add_argument("--limit-alphabet", type=int, default=None)
     p.add_argument("--pretokenizer", choices=["whitespace", "bytelevel"],
                    default="whitespace")
+    p.add_argument("--continuing-subword-prefix", default=None)
+    p.add_argument("--end-of-word-suffix", default=None)
     args = p.parse_args()
 
     print(f"HF tokenizers training (vocab={args.vocab_size})...", file=sys.stderr)

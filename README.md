@@ -140,7 +140,10 @@ cargo build --release --manifest-path gigatrain/Cargo.toml
 ```
 
 Options: `--min-frequency`, `--special` (repeatable, order-significant),
-`--max-token-length`, `--limit-alphabet`, `--threads`, `--pretokenizer`.
+`--max-token-length`, `--limit-alphabet`, `--threads`, `--pretokenizer`,
+`--continuing-subword-prefix`, `--end-of-word-suffix`, and `--wordpiece`
+(shorthand for `--continuing-subword-prefix "##"`, which is exactly what HF's
+`WordPieceTrainer` is).
 
 `GIGATRAIN_STATS=1` prints stage-boundary RSS, structure sizes, and phase-2
 sub-stage timings.
@@ -178,9 +181,19 @@ expects to be the memory hazard was 1 MB.
   much as the trainer. It is reported for what it is.
 - **Phase 2 is the ceiling.** The merge loop is ~75% of runtime and
   sequential by construction, so more cores do not help it.
-- **Scope.** Whitespace and ByteLevel pretokenization; no
-  `continuing_subword_prefix` / `end_of_word_suffix`. Wheels are not published
-  to PyPI, so installation is a local `maturin build`.
+- **Scope.** Whitespace and ByteLevel pretokenization. WordPiece-style
+  `continuing_subword_prefix` and `end_of_word_suffix` are supported but
+  cannot be byte-compared to HF, because **HF is non-deterministic in those
+  modes** (see below). Unigram/SentencePiece is not implemented. Wheels are
+  not published to PyPI, so installation is a local `maturin build`.
+
+- **HuggingFace's trainer is non-reproducible with `##`.** Three runs over an
+  identical corpus give three different merge lists and vocabularies, because
+  decorated token ids come from hash-map order and feed the tie-break
+  (tokenizers#2066). This makes `WordPieceTrainer` non-reproducible by
+  default. gigatrain registers those tokens in sorted order and *is*
+  reproducible; agreement with any single HF run is ~99.6% of merges, which
+  is as close as a deterministic trainer can get to a moving target.
 
 ## Prior art
 

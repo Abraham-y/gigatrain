@@ -114,6 +114,26 @@ live counts cast `as u64` sign-extend identically in both.
 
 ## Known HF-side nondeterminism (excluded from parity claims)
 
+- **`continuing_subword_prefix` / `end_of_word_suffix` make HF's trainer
+  non-deterministic.** Measured directly: three runs of `BpeTrainer` over an
+  identical corpus, with `continuing_subword_prefix="##"`, produced three
+  different merge lists (first divergence at merge 142) and three different
+  vocabularies. With `end_of_word_suffix="</w>"` likewise. With neither set,
+  HF is deterministic across runs.
+
+  The cause is that decorated tokens (`##a`, `a</w>`) are created during
+  `tokenize_words` while iterating an `AHashMap`, so their ids depend on hash
+  order, and those ids feed the tie-break comparator. This is
+  huggingface/tokenizers#2066 / #1794, and it means **`WordPieceTrainer` is
+  non-reproducible by default**, since it sets `##`.
+
+  Byte-exact parity is therefore impossible in these modes — there is no
+  single correct answer to match. gigatrain instead registers decorated
+  tokens in sorted order, before tokenization, so its own output is
+  deterministic across runs and thread counts. Measured agreement with HF
+  under `##` at vocab 2000: 1806 of our 1813 merges appear in a given HF run,
+  1803 appear in all three, and HF shares only 1805 of 1813 with itself.
+
 - `limit_alphabet` with count ties at the cutoff (unstable sort over hash
   order).
 - Heap pop order between two entries with equal (count, pair) but different

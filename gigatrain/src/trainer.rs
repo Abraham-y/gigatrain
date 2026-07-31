@@ -29,6 +29,11 @@ pub struct TrainerConfig {
     pub limit_alphabet: Option<usize>,
     pub initial_alphabet: Vec<char>,
     pub max_token_length: Option<usize>,
+    /// Prefix applied to every symbol that is not word-initial ("##" for
+    /// WordPiece). Stripped from the right part when forming a merged token.
+    pub continuing_subword_prefix: Option<String>,
+    /// Suffix applied to the word-final symbol ("</w>" in some setups).
+    pub end_of_word_suffix: Option<String>,
 }
 
 impl Default for TrainerConfig {
@@ -40,6 +45,8 @@ impl Default for TrainerConfig {
             limit_alphabet: None,
             initial_alphabet: vec![],
             max_token_length: None,
+            continuing_subword_prefix: None,
+            end_of_word_suffix: None,
         }
     }
 }
@@ -110,8 +117,12 @@ fn push_pos(pos: &mut Vec<u32>, i: u32) {
     }
 }
 
-/// Train BPE over a word-frequency table. Table order is irrelevant to the
-/// output (it only determines internal word indices).
+/// Train BPE over a word-frequency table.
+///
+/// Table order does not affect the output: word indices are internal, and
+/// decorated tokens are registered in sorted order rather than encounter
+/// order precisely so that the vocabulary ids feeding the tie-break do not
+/// depend on it.
 ///
 /// Takes the table by value so word strings can be freed once tokenized,
 /// before the merge loop — they are dead weight from that point on.
@@ -181,30 +192,120 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
 
     lap("alphabet");
 
-    // Fast char -> id view of the vocab (valid because we support no
-    // continuing_subword_prefix/end_of_word_suffix, so tokenization only
-    // ever looks up single-char strings; single-char special tokens are
-    // in word_to_id and therefore in this map too).
-    let char_to_id: FxHashMap<char, u32> = word_to_id
-        .iter()
-        .filter_map(|(s, &id)| {
-            let mut chars = s.chars();
-            match (chars.next(), chars.next()) {
-                (Some(c), None) => Some((c, id)),
-                _ => None,
-            }
-        })
-        .collect();
+    let prefix = config.continuing_subword_prefix.as_deref();
+    let suffix = config.end_of_word_suffix.as_deref();
+    let decorated = prefix.is_some() || suffix.is_some();
+
+    // Fast char -> id view of the vocab. Valid only when no decoration is
+    // configured, since then tokenization looks up bare single-char strings.
+    // Single-char special tokens are in word_to_id and so appear here too.
+    let char_to_id: FxHashMap<char, u32> = if decorated {
+        FxHashMap::default()
+    } else {
+        word_to_id
+            .iter()
+            .filter_map(|(s, &id)| {
+                let mut chars = s.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(c), None) => Some((c, id)),
+                    _ => None,
+                }
+            })
+            .collect()
+    };
 
     // 3. Tokenize words into symbol sequences; chars outside the alphabet
     //    (only possible under limit_alphabet) are dropped. Word strings are
     //    dropped immediately afterwards.
+    //
+    // With a prefix/suffix configured, membership is tested on the bare char
+    // but the token entered into the vocabulary is the decorated form, which
+    // may be a new entry. Its length is 1 regardless of decoration: HF counts
+    // source characters covered, not the length of the token string, so "##a"
+    // has length 1. `token_chars` therefore stays exactly HF's `Symbol::len`.
+    //
+    // Decorated tokens are registered in sorted order, in a pass before
+    // tokenization, so their ids do not depend on the order words happen to
+    // arrive from phase 1. Those ids feed the tie-break comparator, so without
+    // this the merge list would vary run to run. HF assigns them in hash-map
+    // order and is non-deterministic here for exactly that reason (see
+    // PARITY.md and huggingface/tokenizers#2066); parity is impossible against
+    // a moving target, so we choose reproducibility instead.
     let n_words = word_table.len();
     let mut words = WordArena::with_capacity(n_words, word_table.total_bytes());
     let mut counts: Vec<u64> = Vec::with_capacity(n_words);
+    let mut ids: Vec<u32> = Vec::new();
+    let mut decorated_buf = String::new();
+
+    if decorated {
+        let mut needed: Vec<String> = Vec::new();
+        let mut seen: FxHashMap<String, ()> = FxHashMap::default();
+        for (word, _) in word_table.iter() {
+            let n_chars = word.chars().count();
+            for (i, c) in word.chars().enumerate() {
+                let mut bare = [0u8; 4];
+                let bare = c.encode_utf8(&mut bare);
+                if !word_to_id.contains_key(bare as &str) {
+                    continue;
+                }
+                decorated_buf.clear();
+                if i > 0 {
+                    if let Some(p) = prefix {
+                        decorated_buf.push_str(p);
+                    }
+                }
+                decorated_buf.push(c);
+                if i + 1 == n_chars {
+                    if let Some(sfx) = suffix {
+                        decorated_buf.push_str(sfx);
+                    }
+                }
+                if !word_to_id.contains_key(&decorated_buf)
+                    && seen.insert(decorated_buf.clone(), ()).is_none()
+                {
+                    needed.push(decorated_buf.clone());
+                }
+            }
+        }
+        needed.sort_unstable();
+        for token in needed {
+            let id = id_to_word.len() as u32;
+            id_to_word.push(token.clone());
+            token_chars.push(1);
+            word_to_id.insert(token, id);
+        }
+    }
+
     for (word, count) in word_table.iter() {
         counts.push(count);
-        words.push_word(word.chars().filter_map(|c| char_to_id.get(&c).copied()));
+        if !decorated {
+            words.push_word(word.chars().filter_map(|c| char_to_id.get(&c).copied()));
+            continue;
+        }
+        ids.clear();
+        let n_chars = word.chars().count();
+        for (i, c) in word.chars().enumerate() {
+            let mut bare = [0u8; 4];
+            let bare = c.encode_utf8(&mut bare);
+            if !word_to_id.contains_key(bare as &str) {
+                continue; // dropped by limit_alphabet
+            }
+            decorated_buf.clear();
+            if i > 0 {
+                if let Some(p) = prefix {
+                    decorated_buf.push_str(p);
+                }
+            }
+            decorated_buf.push(c);
+            if i + 1 == n_chars {
+                if let Some(sfx) = suffix {
+                    decorated_buf.push_str(sfx);
+                }
+            }
+            // Registered above, so this lookup always hits.
+            ids.push(word_to_id[&decorated_buf]);
+        }
+        words.push_word(ids.iter().copied());
     }
     lap("tokenize");
     crate::rss::report("tokenize (word strings still held)");
@@ -279,7 +380,14 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
         }
 
         let part_a = &id_to_word[top.pair.0 as usize];
-        let part_b = &id_to_word[top.pair.1 as usize];
+        let mut part_b = id_to_word[top.pair.1 as usize].as_str();
+        // The right part carries the continuing prefix; strip it so "th" and
+        // "##e" join as "the" rather than "th##e".
+        if let Some(p) = prefix {
+            if let Some(rest) = part_b.strip_prefix(p) {
+                part_b = rest;
+            }
+        }
         let new_token = format!("{part_a}{part_b}");
         // Reuse the existing ID if this string is already in the vocab.
         let new_token_id = word_to_id
