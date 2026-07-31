@@ -102,7 +102,19 @@ Findings of ACL 2023, §4/Thm 4.2), and already implemented in:
 A naive-recount baseline is therefore a strawman and should not be quoted as
 a speedup.
 
-**3. Issue #1313 is not the workload it looks like.**
+**3. Issue #1313 is not the workload it looks like — and both headline
+issues are closed.**
+
+#1313 was closed 2023-12-19 as stale/not-planned. #1681 was closed 2025-05-27
+pointing at a `cache capacity` workaround that commenters then established
+does not apply to training at all; a reopen was requested in July 2025 and
+never granted. "Closed without a fix, over unanswered objections" is both more
+accurate and a stronger story than "open issue". The live ones are
+[#1795](https://github.com/huggingface/tokenizers/issues/1795) (100 GB of RAM
+supports only ~1.5 GB of Chinese JSONL) and
+[#1824](https://github.com/huggingface/tokenizers/issues/1824) (131k vocab
+exceeded 750 GB).
+
 
 [tokenizers #1313](https://github.com/huggingface/tokenizers/issues/1313):
 ~13 billion characters, but **`vocab_size=512`** on DNA-like data with no
@@ -189,6 +201,75 @@ if missed: Unicode class tables must match HF's regex version rather than a
 Unicode database (Python 3.12 is Unicode 15, HF's regex is Unicode 16), and
 HF's trainer feeds files one line at a time, so a trailing newline is
 terminal within its line (`"x\r\n"` is one token, not two).
+
+## Fresh sweep, 2026-07-31
+
+**ffbpe** ([tokn-ai/ffbpe](https://github.com/tokn-ai/ffbpe), v0.1.8,
+released 2026-07-27) is the newest entrant and the only other project with a
+bounded-memory *exact* trainer — i.e. it is attacking the same problem. Its
+README headline is 1 GiB in **5.58 s**, which would beat everything here.
+
+Measured under the same contract as everything else in BENCHMARKS.md (raw
+text in, vocab 32000, English FineWeb, 10-core macOS):
+
+| corpus | ffbpe | gigatrain (ByteLevel) |
+|---|---|---|
+| 100 MB | 8.70 s / 480 MB | 3.07 s / 216 MB |
+| 1 GB | 65.43 s / 1513 MB | 10.22 s / 683 MB |
+
+So **~6x slower end to end**, not faster. Their 5.58 s is a different
+measurement: vocab 10,000, Chinese text, and counting begins from a
+precomputed Unicode-bigram inventory, so pretokenization and word counting
+are excluded. Their own docs say the bundled HF comparison "is not a pure
+trainer-algorithm comparison". Nothing dishonest — it measures their
+compressed-inventory contract — but it is not comparable to a raw-text
+number, and it should not be cited as one in either direction. Their
+bounded-memory mode is a genuine feature this project does not have.
+
+**fast-bytelevel-bpe-go**
+([yunnian/fast-bytelevel-bpe-go](https://github.com/yunnian/fast-bytelevel-bpe-go),
+Go, MIT, June 2026) is the only other project that verifies **byte-exact HF
+parity** — it reports `vocab: SAME / merges: SAME` at vocab 32,779 against
+tokenizers 0.23.1. It is ~6x faster than HF and roughly two orders of
+magnitude slower than gigatrain, but on the parity axis it is the nearest
+peer and should be cited rather than ignored.
+
+**GPU BPE training still does not exist.** Everything branded "GPU BPE"
+(BlockBPE, GPUTOK, RAPIDS `nvtext::byte_pair_encoding`) is *encoding* and
+requires a pre-trained merge table. The only GPU trainers are hobby-scale and
+abandoned: `evintunador/gpu_bpe` (vocab capped at 2^16-2, dead since
+2025-05), `kuprel/minbpe-pytorch` (vocab 512, no regex pretokenization, dead
+since 2024-02). CLAUDE.md's "do NOT use a GPU" is now empirically supported
+rather than merely argued.
+
+**No major lab trains its own BPE.** OLMo 3 reuses OLMo 2's cl100k-derived
+vocab; gpt-neox wraps HF `trainers`; Llama 4, DeepSeek, Mistral and Qwen 3
+ship no trainer code at all. NVIDIA's NeMo Curator docs state plainly that it
+"doesn't handle tokenizer training". The demand argument has to rest on
+non-English and domain-specific builders, not on frontier labs.
+
+**Two HuggingFace trainer bugs that bear on any parity claim:**
+
+- [#2058](https://github.com/huggingface/tokenizers/issues/2058): pair counts
+  are `i32` and wrap negative on large corpora, silently corrupting merge
+  order. PARITY.md already notes this crate uses `i64`; parity therefore holds
+  only where HF itself has not overflowed.
+- [#2066](https://github.com/huggingface/tokenizers/issues/2066),
+  [#1794](https://github.com/huggingface/tokenizers/issues/1794): HF BPE
+  training is reported to be **non-deterministic run to run**, because token
+  ids assigned in `AHashMap` order feed the tie-break comparator. Our parity
+  suite has been stable across many runs against 0.22.2, but this is a reason
+  to pin the HF version in CI (it is) and to state which behaviour is matched.
+
+**No benchmark suite for trainers exists.** The only one
+([YouTokenToMe's](https://github.com/VKCOM/YouTokenToMe/blob/master/benchmark.md))
+was archived read-only in 2024, reports no memory and no parity, and stops at
+1 GB. Everything else called a "tokenizer benchmark" measures encoding. The
+published HF figure for 1 GB varies wildly by source — 59 s (arXiv:2604.05192),
+97.7 s (YTTM, 36 cores), 244.4 s (measured here, 64 cores) — which is the
+anti-scaling finding triangulated independently. A harness reporting wall
+time, peak RSS **and** merge parity across core counts may be a contribution
+in its own right.
 
 ## Landscape
 
