@@ -220,21 +220,49 @@ was 4.94 s vs 4.87 s — inside the noise — and halving the scanner/owner pool
 was clearly worse. Reverted rather than landing complexity for a
 non-effect.
 
+### Four optimizations tried and rejected
+
+Phase 1 was instrumented per stage (`GIGATRAIN_STATS=1` now reports summed
+CPU-ms for read / scan+hash / send-blocked / recv-blocked / insert). On 1 GB
+ByteLevel, 10 threads: **scan+hash 7589 ms across 5 scanners, insert 5538 ms
+across 5 owners, and owners blocked 2118 ms waiting on recv**. Scanners are
+the critical path — their per-thread ~1518 ms is essentially the 1.63 s wall.
+
+Four changes were implemented against that reading, and all four were
+measured on a clean 64-core box and then reverted:
+
+| change | rationale | measured (1 GB, 64 threads) |
+|---|---|---|
+| 60/40 scanner/owner split | CPU split is ~58/42, so balance the pools | 4.7 s vs 4.7 s — no effect |
+| byte-table ASCII path in `next_piece_len` | avoid decoding chars to classify them | **10% slower**; 1 thread 8.4 s -> 12.1 s |
+| zero-copy batching (spans into the shared chunk) | removes one memcpy pass over the corpus | 5.4 s vs 4.8 s — slightly worse |
+| (earlier) thread-pool retuning at 10 cores | apparent oversubscription | inside noise; later confirmed and landed at 64 cores |
+
+The ASCII path is instructive: replacing `char_indices()` with a per-character
+`class_at()` that indexes `text[i..]` re-does a char-boundary check on every
+character, which costs more than the iterator it replaced. Faster-looking code
+was slower code.
+
+The conclusion from the instrumentation is that phase 1 is bound by the
+hashing and hash-map inserts themselves, not by copying, classification, or
+pool balance. Reducing it further means changing what work is done — a cheaper
+hash, or not hashing every occurrence — not doing the same work more
+efficiently.
+
 Still untested, roughly by expected payoff:
 
-1. **Zero-copy batching.** Scanners copy each token's bytes into a batch.
-   Since chunks are already `Arc`-shared and outlive their batches, a batch
-   could carry `(offset, len, hash)` into the chunk instead, removing a full
-   pass of copying over the corpus.
-2. **Byte-level piece scanning.** `next_piece_len` decodes UTF-8 chars; an
-   ASCII fast path through raw bytes would avoid decoding for the bulk of web
-   text, in the same spirit as the ASCII class table that gave 1.4x.
-3. **Word-at-a-time scanning.** Processing 8 bytes per step with `u64` bit
-   tricks is portable (no intrinsics, identical on ARM and x86) and typically
-   gives 2-4x on scan-bound loops.
-4. **Allocator choice.** This is an allocation-heavy, memory-bound program and
-   macOS libmalloc is slow to return freed pages; a mimalloc/jemalloc feature
-   flag may change peak RSS materially, especially on Linux.
+1. **A cheaper hash for routing.** Every token occurrence is hashed
+   (~240M times per GB). FxHash over short slices is already cheap, but the
+   instrumentation says this is where the time is, so it is the first thing to
+   attack.
+2. **Word-at-a-time scanning.** Processing 8 bytes per step with `u64` bit
+   tricks is portable (no intrinsics, identical on ARM and x86). Unlike the
+   rejected ASCII path, this removes work rather than reorganising it.
+3. **Allocator choice.** A mimalloc/jemalloc feature flag may change peak RSS
+   materially, especially on Linux.
+4. **Merge loop**: CLAUDE.md's linked-list with position-indexed occurrences,
+   replacing the full-word rescan. Now only ~17% of runtime, so the payoff
+   shrank while the parity risk did not.
 
 **Measuring these needs a quiet machine.** After the HF and SentencePiece runs
 left 14-28 GB of swap occupied, repeated runs of an identical configuration

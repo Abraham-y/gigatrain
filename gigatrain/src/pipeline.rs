@@ -7,8 +7,43 @@
 
 use crate::batch::WordBatch;
 use crate::{WordCounter, WordTable};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
+
+/// Per-stage nanosecond counters, summed across threads. Only meaningful with
+/// GIGATRAIN_STATS=1; the clock reads cost a few ns each and are skipped
+/// otherwise.
+#[derive(Default)]
+struct StageTimers {
+    read: AtomicU64,
+    scan: AtomicU64,
+    send: AtomicU64,
+    insert: AtomicU64,
+    recv: AtomicU64,
+}
+
+impl StageTimers {
+    fn report(&self, scanners: usize, owners: usize, readers: usize) {
+        let ms = |a: &AtomicU64| a.load(Ordering::Relaxed) as f64 / 1e6;
+        eprintln!(
+            "phase1 cpu-ms (summed across threads):\n  \
+             read {:.0} over {} readers\n  \
+             scan+hash {:.0} over {} scanners\n  \
+             send-blocked {:.0}\n  \
+             recv-blocked {:.0}\n  \
+             insert {:.0} over {} owners",
+            ms(&self.read),
+            readers,
+            ms(&self.scan),
+            scanners,
+            ms(&self.send),
+            ms(&self.recv),
+            ms(&self.insert),
+            owners,
+        );
+    }
+}
 
 fn die(msg: &str) -> ! {
     eprintln!("error: {msg}");
@@ -67,6 +102,10 @@ impl Sizing {
         // so `--threads 64` really does run 64 workers rather than 128. A
         // pipeline needs at least one of each, so `--threads 1` still spawns
         // two.
+        // Instrumented on 1 GB ByteLevel, scan+hash costs ~7.6 s of CPU
+        // against ~5.5 s for the owners' inserts, which suggests a 60/40
+        // split. Measured on 64 cores it made no difference (4.7 s either
+        // way), so the even split stays.
         let scanners = (nthreads / 2).max(1);
         let owners = nthreads.saturating_sub(scanners).max(1);
 
@@ -114,6 +153,7 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
         .sum();
     let sizing = Sizing::plan(total_bytes, nthreads);
     let nshards_u64 = sizing.owners as u64;
+    let timers = Arc::new(StageTimers::default());
     // HF's trainer pretokenizes files one line at a time, and under ByteLevel
     // a line's trailing newline is content that belongs to that line. Chunks
     // must therefore hold whole lines (see reader::CutRule).
@@ -150,11 +190,27 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
         let owners: Vec<_> = batch_receivers
             .into_iter()
             .map(|rx| {
+                let timers = Arc::clone(&timers);
                 s.spawn(move || {
                     let mut map = WordCounter::new();
-                    while let Ok(batch) = rx.recv() {
+                    let timed = crate::rss::enabled();
+                    loop {
+                        let t0 = timed.then(std::time::Instant::now);
+                        let batch = rx.recv();
+                        if let Some(t0) = t0 {
+                            timers
+                                .recv
+                                .fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                        }
+                        let Ok(batch) = batch else { break };
+                        let t1 = timed.then(std::time::Instant::now);
                         for (word, hash) in batch.iter() {
                             map.add_hashed(word, hash, 1);
+                        }
+                        if let Some(t1) = t1 {
+                            timers
+                                .insert
+                                .fetch_add(t1.elapsed().as_nanos() as u64, Ordering::Relaxed);
                         }
                     }
                     map
@@ -166,13 +222,16 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
             .map(|_| {
                 let chunk_rx = Arc::clone(&chunk_rx);
                 let batch_senders = batch_senders.clone();
+                let timers = Arc::clone(&timers);
                 s.spawn(move || {
+                    let timed = crate::rss::enabled();
                     let nshards = nshards_u64;
                     let mut batches: Vec<WordBatch> =
                         (0..nshards as usize).map(|_| WordBatch::new()).collect();
                     loop {
                         let chunk = chunk_rx.lock().unwrap().recv();
                         let Ok(chunk) = chunk else { break };
+                        let t_scan = timed.then(std::time::Instant::now);
                         let text = std::str::from_utf8(&chunk)
                             .unwrap_or_else(|e| die(&format!("input is not UTF-8: {e}")));
                         // Route on the high bits: the low bits pick the
@@ -201,6 +260,11 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
                             }
                         } else {
                             crate::split::for_each_word(text, route);
+                        }
+                        if let Some(t) = t_scan {
+                            timers
+                                .scan
+                                .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
                         }
                     }
                     for (shard, batch) in batches.into_iter().enumerate() {
@@ -257,6 +321,9 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
         }
         owners.into_iter().map(|h| h.join().unwrap()).collect()
     });
+    if crate::rss::enabled() {
+        timers.report(sizing.scanners, sizing.owners, sizing.readers);
+    }
     crate::rss::report("phase 1 shard counters");
 
     // Shards are disjoint, so combining is concatenation: no lookups, no
