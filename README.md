@@ -7,10 +7,9 @@ Trains a 32k vocabulary on **12.9 GB of FineWeb in 44 seconds** using 2.7 GB
 of RAM. On the same machine and corpus HuggingFace takes 12.6 minutes and
 29.8 GB; SentencePiece segfaults.
 
-Output is byte-identical to `tokenizers.trainers.BpeTrainer`, verified by CI
-on corpora up to 1 GB — see [Parity](#parity) for exactly what is and is not
-checked. The 12.9 GB run above is a timing measurement; its merge list was
-not diffed against HF.
+Output is byte-identical to `tokenizers.trainers.BpeTrainer` — **verified at
+12.9 GB**, where both trainers produce the same 16,969 merges. See
+[Parity](#parity) for exactly what is checked.
 
 Whitespace, **ByteLevel (GPT-2 regex)** and WordPiece-style pretokenization.
 Zero runtime dependencies. Rust, with Python bindings.
@@ -113,11 +112,18 @@ A separate CI job builds the wheel and round-trips the Python bindings'
 encodes identical ids. CI runs the unit tests on Linux, macOS and Windows,
 and the parity gate on Linux/glibc.
 
-**Scale of verification.** The parity gate's largest corpus is 4.9 MB
-(synthetic, vocab 32k). Merge lists have additionally been diffed against HF
-at 100 MB and 1 GB of FineWeb (whitespace) and 100 MB (ByteLevel), by
-`scripts/benchmark.py` and `scripts/parity_check.py`. At 12.9 GB only timing
-was measured.
+**Scale of verification.** The parity gate runs on every commit and its
+largest corpus is 4.9 MB (synthetic, vocab 32k) — CI cannot download 13 GB
+per push. Merge lists have separately been diffed against HF at 100 MB, 1 GB
+and **12.9 GB** of FineWeb, the last by
+`modal run scripts/modal_benchmark.py::parity --size-mb 13000`:
+
+| corpus | pretokenizer | merges | result |
+|---|---|---|---|
+| 12.9 GB | whitespace | 16,969 | identical |
+| 1 GB | whitespace | 25,168 | identical |
+| 100 MB | ByteLevel | 31,800 | identical |
+| 100 MB | whitespace | 29,298 | identical |
 
 **Two known divergences**, both documented in [PARITY.md](PARITY.md):
 HF's `i32` pair counter wraps past 2^31 occurrences of one pair and silently

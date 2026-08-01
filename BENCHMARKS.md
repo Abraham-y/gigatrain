@@ -142,7 +142,21 @@ representation with position-indexed occurrences, replacing the full-word
 rescan per merge; it is a real win on paper but a parity risk, so it belongs
 in its own change with heavy fuzzing.
 
-## The 12.9 GB comparison, on hardware that can hold it
+## Parity verified at 12.9 GB
+
+`modal run scripts/modal_benchmark.py::parity --size-mb 13000` trains both
+trainers on the same 12.9 GB corpus keeping their merge lists, and diffs
+them. Whitespace, vocab 32000, 16 cores (deliberately not 64 — HF degrades
+with core count, and this run needs it to finish correctly rather than fast):
+
+```
+ours_merges: 16969   hf_merges: 16969   identical: True
+ours_seconds: 107.8  hf_seconds: 496.9
+```
+
+Until this run, nothing above 1 GB had been diffed: the benchmark harnesses
+send trainer stdout to `/dev/null`, so the 12.9 GB headline asserted a parity
+result that had never been computed. It has now.
 
 64-core x86-64 Linux, 192 GiB, glibc, vocab 32000. This is the run the laptop
 could not do: with enough RAM, HuggingFace and SentencePiece are no longer
