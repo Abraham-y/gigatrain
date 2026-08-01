@@ -103,10 +103,21 @@ regardless of `max_token_length`.
 
 ## Numeric types
 
-HF keeps `pair_counts` as `i32` and casts word counts `u64 as i32` — it
-overflows on huge corpora (where HF cannot finish training anyway). We use
-`i64` internally; parity holds wherever HF itself doesn't overflow. Negative
-live counts cast `as u64` sign-extend identically in both.
+HF keeps `pair_counts` as `i32` and casts word counts `u64 as i32`. Past
+2^31 occurrences of a single pair the counter wraps negative, the pair is
+never pushed onto the heap, and HF silently emits **fewer merges** — in the
+limit, none at all. This crate uses `i64` and does not.
+
+**This is a real, reachable divergence, not a theoretical one.** Measured: a
+corpus with 2,147,850,000 occurrences of one pair makes HF emit zero merges
+and a one-token vocabulary, while gigatrain emits three; both are
+deterministic, 3/3 runs. HF completed that run in 10-19 seconds, so an
+earlier version of this document was wrong to excuse it as happening only
+"where HF cannot finish training anyway".
+
+Extrapolating the most frequent FineWeb bigram, the threshold lands around
+120-150 GB of English web text — below the scale this project targets. Above
+it, gigatrain's output is arguably the correct one, but it is **not** HF's.
 
 ## Pretokenization reference points
 
@@ -131,12 +142,29 @@ live counts cast `as u64` sign-extend identically in both.
   huggingface/tokenizers#2066 / #1794, and it means **`WordPieceTrainer` is
   non-reproducible by default**, since it sets `##`.
 
-  Byte-exact parity is therefore impossible in these modes — there is no
-  single correct answer to match. gigatrain instead registers decorated
-  tokens in sorted order, before tokenization, so its own output is
-  deterministic across runs and thread counts. Measured agreement with HF
-  under `##` at vocab 2000: 1806 of our 1813 merges appear in a given HF run,
-  1803 appear in all three, and HF shares only 1805 of 1813 with itself.
+  gigatrain registers decorated tokens in **sorted** order, before
+  tokenization, so its own output is deterministic across runs and thread
+  counts. Measured agreement with HF under `##` at vocab 2000: 1806 of our
+  1813 merges appear in a given HF run, 1803 appear in all three, and HF
+  shares only 1805 of 1813 with itself.
+
+  **Where HF is deterministic, we still differ, and that is a deliberate
+  trade.** An earlier version of this document justified the gap by saying
+  there is "no single correct answer to match". That is too broad. When
+  decorated-token discovery order is forced — most simply, a corpus with one
+  unique word — HF's hash-map iteration cannot vary and it has exactly one
+  answer, which we do not reproduce. Minimal case: the single word `bccaa`
+  with `##`, where HF assigns `##c` before `##a` (first appearance) and we
+  assign `##a` before `##c` (sorted), diverging at merge index 1. Fuzzing
+  found HF deterministic in 60 of 550 random decorated configs, and we
+  differed on 10 of those 60.
+
+  Matching HF here would mean reproducing `AHashMap` iteration order, which
+  is not a defined order at all; adopting first-appearance order instead
+  would make *our* output depend on the order phase 1 happens to emit words,
+  which varies with thread scheduling. Reproducibility was judged worth more
+  than matching an arbitrary order, so **byte-exact parity is claimed only
+  for the undecorated modes**.
 
 - `limit_alphabet` with count ties at the cutoff (unstable sort over hash
   order).

@@ -116,8 +116,15 @@ and the parity gate on Linux/glibc.
 **Scale of verification.** The parity gate's largest corpus is 4.9 MB
 (synthetic, vocab 32k). Merge lists have additionally been diffed against HF
 at 100 MB and 1 GB of FineWeb (whitespace) and 100 MB (ByteLevel), by
-`scripts/benchmark.py` and `scripts/parity_check.py`. Nothing above 1 GB has
-been diffed — at 12.9 GB only timing was measured.
+`scripts/benchmark.py` and `scripts/parity_check.py`. At 12.9 GB only timing
+was measured.
+
+**Two known divergences**, both documented in [PARITY.md](PARITY.md):
+HF's `i32` pair counter wraps past 2^31 occurrences of one pair and silently
+emits fewer merges (reachable around 120–150 GB of English text, where
+gigatrain's output is arguably the correct one but is not HF's); and the
+decorated `##` / `</w>` modes, where HF is usually nondeterministic and we
+differ even in the cases where it is not.
 
 ## Usage
 

@@ -102,7 +102,26 @@ fn main() {
             let (word, count) = line
                 .rsplit_once('\t')
                 .unwrap_or_else(|| die(&format!("bad TSV line: {line:?}")));
-            acc.add(word, num("--words-tsv count", count));
+            let count: u64 = num("--words-tsv count", count);
+            // Counts are summed as i64 internally; a value past i64::MAX would
+            // go negative and the word would silently never be queued for
+            // merging rather than being counted.
+            if count > i64::MAX as u64 {
+                die(&format!(
+                    "--words-tsv count {count} exceeds the maximum supported ({})",
+                    i64::MAX
+                ));
+            }
+            // Merges are printed space-separated, so a token containing a
+            // space would produce a line no parser can split correctly.
+            if word.contains(' ') {
+                die(&format!(
+                    "--words-tsv word {word:?} contains a space, which the \
+                     space-separated merge output cannot represent; use the \
+                     Python API, which returns merges as pairs"
+                ));
+            }
+            acc.add(word, count);
         }
         acc.into_table()
     } else {
