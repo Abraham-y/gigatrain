@@ -18,8 +18,12 @@
 //!   --words-tsv FILE        word<TAB>count table instead of raw text
 //!
 //! Raw text mode pretokenizes with whitespace splitting, byte-for-byte
-//! equivalent to HF's WhitespaceSplit. Files are streamed in 32MB chunks
-//! (never fully resident) and counted across threads.
+//! equivalent to HF's WhitespaceSplit. Files are read in chunks sized from
+//! the input and counted across threads. Chunks are cut at token boundaries,
+//! so a stretch of input containing none — no whitespace at all, or no
+//! newline under --pretokenizer bytelevel — is buffered whole; memory is
+//! therefore bounded by the longest boundary-free run, not by a fixed chunk
+//! size.
 
 use gigatrain::{train, TrainerConfig, WordCounter, WordTable};
 use std::io::Write;

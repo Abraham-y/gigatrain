@@ -152,6 +152,15 @@ pub fn read_range(
                     if eof {
                         return Ok(());
                     }
+                    // No boundary anywhere in this range, so every token
+                    // overlapping it began before `start` and belongs to an
+                    // earlier range: this one owns nothing. Without this,
+                    // each range scans to EOF hunting for a boundary, so an
+                    // N-reader run reads a boundary-free file N times and
+                    // gets slower as threads are added.
+                    if buf_start >= end {
+                        return Ok(());
+                    }
                     continue;
                 }
             }

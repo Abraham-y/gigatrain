@@ -307,12 +307,26 @@ pub fn count_words(
         let tx = chunk_tx;
         let mut jobs: Vec<(String, u64, u64)> = Vec::new();
         for path in paths {
-            let len = std::fs::metadata(path)
-                .map(|m| m.len())
-                .unwrap_or_else(|e| {
+            let meta = match std::fs::metadata(path) {
+                Ok(m) => m,
+                Err(e) => {
                     errors.set(format!("reading {path}: {e}"));
-                    0
-                });
+                    break;
+                }
+            };
+            // Ranges come from the stat size and the readers seek, so a
+            // non-regular file cannot be read this way. A FIFO reports size 0,
+            // which previously produced an empty vocabulary and exit 0 — so
+            // `gigatrain <(zcat corpus.gz)` silently emitted nothing.
+            if !meta.is_file() {
+                errors.set(format!(
+                    "{path} is not a regular file; pipes and process \
+                     substitution are not supported because the reader seeks. \
+                     Write the stream to a file first."
+                ));
+                break;
+            }
+            let len = meta.len();
             for (start, end) in crate::reader::split_ranges(len, sizing.readers, 64 << 20) {
                 jobs.push((path.clone(), start, end));
             }

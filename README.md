@@ -216,6 +216,16 @@ landed, phase 1 — not the merge loop — became ~83% of runtime.
   run is ~99.6% of merges, which is as close as a deterministic trainer can
   get to a moving target. Byte-exact parity is claimed only for the
   undecorated modes.
+- **Memory is input-dependent, not just size-dependent.** The reader must
+  buffer until it finds a cut point, so a corpus with no whitespace at all
+  peaks at ~4.5x its size, and under `--pretokenizer bytelevel` (which cuts
+  only after newlines) a file with no newline is buffered whole. Normal web
+  text is unaffected — 12.9 GB of FineWeb peaks at 2.7 GB — but this is the
+  same shape of failure as the HuggingFace OOM this project criticises, and
+  it is fair to say so.
+- **Input must be a regular file.** Ranges come from the stat size and the
+  readers seek, so pipes and process substitution are rejected with an error
+  rather than silently producing an empty tokenizer.
 - **Scope.** No Unigram/SentencePiece model. Wheels are built for Linux,
   macOS and Windows by `.github/workflows/release.yml` on a version tag, but
   nothing is published to PyPI yet, so installation means a local
