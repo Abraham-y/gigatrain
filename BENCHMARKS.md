@@ -146,13 +146,19 @@ in its own change with heavy fuzzing.
 
 `modal run scripts/modal_benchmark.py::parity --size-mb 13000` trains both
 trainers on the same 12.9 GB corpus keeping their merge lists, and diffs
-them. Whitespace, vocab 32000, 16 cores (deliberately not 64 — HF degrades
-with core count, and this run needs it to finish correctly rather than fast):
+them. Vocab 32000, 16 cores (deliberately not 64 — HF degrades with core count,
+and these runs need it to finish correctly rather than fast, which also makes
+them the least favourable comparison for gigatrain):
 
-```
-ours_merges: 16969   hf_merges: 16969   identical: True
-ours_seconds: 107.8  hf_seconds: 496.9
-```
+| pretokenizer | merges | gigatrain | HF | identical |
+|---|---|---|---|---|
+| ByteLevel | 31,790 | 38.0 s | 257.1 s | yes |
+| whitespace | 16,969 | 107.8 s | 496.9 s | yes |
+
+Note ByteLevel is both *faster* and produces *more* merges: it yields far
+fewer unique pretokens (9.0M vs 27.4M), so phase 2 does less work, and the
+32k vocabulary is reached with more merges because its alphabet is 256 bytes
+rather than every character observed.
 
 Until this run, nothing above 1 GB had been diffed: the benchmark harnesses
 send trainer stdout to `/dev/null`, so the 12.9 GB headline asserted a parity

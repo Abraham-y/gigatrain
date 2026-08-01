@@ -8,8 +8,8 @@ of RAM. On the same machine and corpus HuggingFace takes 12.6 minutes and
 29.8 GB; SentencePiece segfaults.
 
 Output is byte-identical to `tokenizers.trainers.BpeTrainer` — **verified at
-12.9 GB**, where both trainers produce the same 16,969 merges. See
-[Parity](#parity) for exactly what is checked.
+12.9 GB in both pretokenization modes**. See [Parity](#parity) for exactly
+what is checked.
 
 Whitespace, **ByteLevel (GPT-2 regex)** and WordPiece-style pretokenization.
 Zero runtime dependencies. Rust, with Python bindings.
@@ -118,12 +118,16 @@ per push. Merge lists have separately been diffed against HF at 100 MB, 1 GB
 and **12.9 GB** of FineWeb, the last by
 `modal run scripts/modal_benchmark.py::parity --size-mb 13000`:
 
-| corpus | pretokenizer | merges | result |
-|---|---|---|---|
-| 12.9 GB | whitespace | 16,969 | identical |
-| 1 GB | whitespace | 25,168 | identical |
-| 100 MB | ByteLevel | 31,800 | identical |
-| 100 MB | whitespace | 29,298 | identical |
+| corpus | pretokenizer | merges | gigatrain | HF | result |
+|---|---|---|---|---|---|
+| 12.9 GB | ByteLevel | 31,790 | 38.0 s | 257.1 s | identical |
+| 12.9 GB | whitespace | 16,969 | 107.8 s | 496.9 s | identical |
+| 1 GB | whitespace | 25,168 | — | — | identical |
+| 100 MB | ByteLevel | 31,800 | — | — | identical |
+| 100 MB | whitespace | 29,298 | — | — | identical |
+
+The 12.9 GB rows are at 16 cores, where HF is at its best; at 64 cores HF
+takes 754.9 s on the same file.
 
 **Two known divergences**, both documented in [PARITY.md](PARITY.md):
 HF's `i32` pair counter wraps past 2^31 occurrences of one pair and silently
