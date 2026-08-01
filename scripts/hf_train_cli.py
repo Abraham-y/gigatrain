@@ -16,11 +16,17 @@ def main():
     p.add_argument("--min-frequency", type=int, default=0)
     p.add_argument("--special", action="append", default=[])
     p.add_argument("--max-token-length", type=int, default=None)
+    p.add_argument("--pretokenizer", choices=["whitespace", "bytelevel"],
+                   default="whitespace")
     p.add_argument("files", nargs="+")
     args = p.parse_args()
 
     tok = Tokenizer(models.BPE())
-    tok.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
+    if args.pretokenizer == "bytelevel":
+        tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False,
+                                                    use_regex=True)
+    else:
+        tok.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
     kwargs = dict(
         vocab_size=args.vocab_size,
         min_frequency=args.min_frequency,

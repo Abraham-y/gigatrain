@@ -195,6 +195,61 @@ def benchmark(sizes, cpu, run_baselines=True, thread_scan=True):
     return {"results": results, "thread_scan": scan, "cpu": cpu}
 
 
+@app.function(volumes={DATA: volume}, timeout=24 * 3600)
+def parity_at_scale(size_mb: int = 13000, pretokenizer: str = "whitespace",
+                    vocab_size: int = 32000):
+    """Diff gigatrain's merge list against HF's at full corpus scale.
+
+    The benchmark functions discard stdout, so nothing above 1 GB had ever
+    been compared merge-for-merge — the headline number asserted a parity
+    result that was never computed. This computes it.
+    """
+    import os
+
+    os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
+    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+    gt = "/repo/gigatrain/target/release/gigatrain"
+    corpus = f"{DATA}/fineweb_{size_mb}mb.txt"
+    if not os.path.exists(corpus):
+        _prepare_corpora([size_mb])
+
+    special = '--special "<|endoftext|>"'
+    pt_gt = f"--pretokenizer {pretokenizer}"
+    pt_hf = f"--pretokenizer {pretokenizer}"
+
+    print(f"=== gigatrain ({pretokenizer}, vocab {vocab_size})", flush=True)
+    ours, ours_s, _ = _measure(
+        "gigatrain", size_mb,
+        f"{gt} --vocab-size {vocab_size} {special} {pt_gt} {corpus} > /tmp/ours.merges",
+    )
+    print(f"=== HuggingFace ({pretokenizer}) — this is the slow one", flush=True)
+    theirs, theirs_s, _ = _measure(
+        "hf", size_mb,
+        f"python3 /repo/scripts/hf_train_cli.py --vocab-size {vocab_size} "
+        f"{special} {pt_hf} {corpus} > /tmp/hf.merges",
+    )
+
+    a = open("/tmp/ours.merges").read().splitlines()
+    b = open("/tmp/hf.merges").read().splitlines()
+    identical = a == b
+    first_diff = None
+    for i, (x, y) in enumerate(zip(a, b)):
+        if x != y:
+            first_diff = (i, x, y)
+            break
+    result = {
+        "size_mb": size_mb, "pretokenizer": pretokenizer,
+        "vocab_size": vocab_size,
+        "ours_merges": len(a), "hf_merges": len(b),
+        "identical": identical, "first_diff": first_diff,
+        "ours_seconds": round(ours, 1), "hf_seconds": round(theirs, 1),
+    }
+    print(f"\n=== PARITY AT {size_mb} MB ({pretokenizer}): "
+          f"{'IDENTICAL' if identical else 'DIVERGED'}", flush=True)
+    print(result, flush=True)
+    return result
+
+
 @app.function(volumes={DATA: volume}, timeout=3600)
 def parity_check():
     """Run the full parity gate on Linux, as a cross-check of CI."""
@@ -203,6 +258,18 @@ def parity_check():
     os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
     r = _sh("cd /repo && bash scripts/run_parity_ci.sh")
     return r.returncode
+
+
+@app.local_entrypoint()
+def parity(size_mb: int = 13000, pretokenizer: str = "whitespace",
+           vocab_size: int = 32000, cpu: int = 16, memory: int = 192):
+    """Verify merge-list parity at full scale: `modal run ... ::parity`."""
+    out = parity_at_scale.with_options(cpu=cpu, memory=memory * 1024).remote(
+        size_mb, pretokenizer, vocab_size
+    )
+    print("\n================ PARITY AT SCALE ================")
+    for k, v in out.items():
+        print(f"  {k}: {v}")
 
 
 @app.local_entrypoint()
