@@ -29,6 +29,15 @@ impl WordBatch {
     #[inline]
     pub fn push(&mut self, word: &str, hash: u64) {
         self.data.extend_from_slice(word.as_bytes());
+        // Without this the cast wraps and `iter()` hands out a &str built from
+        // a bogus range, which is undefined behaviour: the offsets feed
+        // `from_utf8_unchecked`. Reachable only via a single pretoken larger
+        // than 4 GiB (a corpus with no whitespace for that long), which the
+        // reader deliberately accumulates into one chunk.
+        assert!(
+            self.data.len() <= u32::MAX as usize,
+            "single batch exceeds 4 GiB of pretokens"
+        );
         self.offsets.push(self.data.len() as u32);
         self.hashes.push(hash);
     }

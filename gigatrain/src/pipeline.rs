@@ -45,9 +45,25 @@ impl StageTimers {
     }
 }
 
-fn die(msg: &str) -> ! {
-    eprintln!("error: {msg}");
-    std::process::exit(2);
+/// First error seen by any pipeline thread. Phase 1 runs across three thread
+/// pools, so a failure is recorded here and surfaced by `count_words` rather
+/// than terminating the process: this is library code, and calling
+/// `process::exit` from it killed the caller's Python interpreter outright,
+/// skipping `finally` blocks and discarding buffered output.
+#[derive(Default)]
+struct ErrorSlot(Mutex<Option<String>>);
+
+impl ErrorSlot {
+    fn set(&self, msg: String) {
+        let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            *slot = Some(msg);
+        }
+    }
+
+    fn take(&self) -> Option<String> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
 }
 
 /// Phase-1 pipeline sizing, derived from thread count and input size rather
@@ -146,7 +162,11 @@ impl Sizing {
 /// Chunks are cut at ASCII whitespace bytes, which are always real word
 /// boundaries (UTF-8 continuation bytes are never ASCII, and every ASCII
 /// whitespace char satisfies char::is_whitespace).
-pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTable {
+pub fn count_words(
+    paths: &[String],
+    nthreads: usize,
+    bytelevel: bool,
+) -> Result<WordTable, String> {
     let total_bytes: u64 = paths
         .iter()
         .map(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
@@ -154,6 +174,7 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
     let sizing = Sizing::plan(total_bytes, nthreads);
     let nshards_u64 = sizing.owners as u64;
     let timers = Arc::new(StageTimers::default());
+    let errors = Arc::new(ErrorSlot::default());
     // HF's trainer pretokenizes files one line at a time, and under ByteLevel
     // a line's trailing newline is content that belongs to that line. Chunks
     // must therefore hold whole lines (see reader::CutRule).
@@ -223,6 +244,7 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
                 let chunk_rx = Arc::clone(&chunk_rx);
                 let batch_senders = batch_senders.clone();
                 let timers = Arc::clone(&timers);
+                let errors = Arc::clone(&errors);
                 s.spawn(move || {
                     let timed = crate::rss::enabled();
                     let nshards = nshards_u64;
@@ -232,8 +254,10 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
                         let chunk = chunk_rx.lock().unwrap().recv();
                         let Ok(chunk) = chunk else { break };
                         let t_scan = timed.then(std::time::Instant::now);
-                        let text = std::str::from_utf8(&chunk)
-                            .unwrap_or_else(|e| die(&format!("input is not UTF-8: {e}")));
+                        let text = std::str::from_utf8(&chunk).unwrap_or_else(|e| {
+                            errors.set(format!("input is not valid UTF-8: {e}"));
+                            ""
+                        });
                         // Route on the high bits: the low bits pick the
                         // hash-map bucket, so reusing them here would leave
                         // each shard's index sparsely populated.
@@ -284,8 +308,11 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
         let mut jobs: Vec<(String, u64, u64)> = Vec::new();
         for path in paths {
             let len = std::fs::metadata(path)
-                .unwrap_or_else(|e| die(&format!("stat {path}: {e}")))
-                .len();
+                .map(|m| m.len())
+                .unwrap_or_else(|e| {
+                    errors.set(format!("reading {path}: {e}"));
+                    0
+                });
             for (start, end) in crate::reader::split_ranges(len, sizing.readers, 64 << 20) {
                 jobs.push((path.clone(), start, end));
             }
@@ -300,6 +327,7 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
                 let next_job = Arc::clone(&next_job);
                 let chunk = sizing.chunk;
                 let rule = cut_rule;
+                let errors = Arc::clone(&errors);
                 s.spawn(move || loop {
                     let i = next_job.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some((path, start, end)) = jobs.get(i) else {
@@ -307,7 +335,8 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
                     };
                     if let Err(e) = crate::reader::read_range(path, *start, *end, chunk, rule, &tx)
                     {
-                        die(&e);
+                        errors.set(e);
+                        break;
                     }
                 })
             })
@@ -346,5 +375,8 @@ pub fn count_words(paths: &[String], nthreads: usize, bytelevel: bool) -> WordTa
         }
     }
     crate::rss::report("combining shards");
-    table
+    match errors.take() {
+        Some(e) => Err(e),
+        None => Ok(table),
+    }
 }

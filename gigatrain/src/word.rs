@@ -12,29 +12,49 @@
 //!   the whole run and only its length shrinks: the arena never reallocates,
 //!   never needs compaction, and costs one allocation instead of one per
 //!   unique word.
-//! - HF stores a per-symbol `len` (chars covered, summed on merge), but that
-//!   value is always exactly the char count of the symbol's token string —
-//!   initial symbols are one char, and a merge sums the two parts, matching
-//!   the concatenated string. So it lives in a dense `token_chars` table
-//!   indexed by token ID instead of in every symbol, halving the arena and
-//!   the bytes the hot merge scan touches.
+//! - HF stores a per-symbol `len` (chars covered, summed on merge). With no
+//!   decoration that equals the char count of the symbol's token string, so
+//!   symbols can be bare `u32` ids and the length need not be stored at all.
+//!
+//!   That equivalence **breaks** once `continuing_subword_prefix` or
+//!   `end_of_word_suffix` is set, because a token id is then reachable both
+//!   as an initial symbol (covering one source char) and as a merged token
+//!   (covering several) — via a special token that spells a decorated
+//!   symbol, or via merge-time id reuse once the prefix is stripped. HF is
+//!   immune because it stores the length per symbol, not per id. An earlier
+//!   version of this file kept a per-id table and was wrong for exactly that
+//!   reason.
+//!
+//!   So `sym_lens` is a parallel per-symbol array, populated only when
+//!   `max_token_length` is set — the sole consumer of the value.
 
 pub type Pair = (u32, u32);
 
 #[derive(Default)]
 pub struct WordArena {
     symbols: Vec<u32>,
+    /// Source characters covered by each symbol, parallel to `symbols`. Empty
+    /// unless `max_token_length` is in use; see the module comment.
+    sym_lens: Vec<u32>,
     /// Per word: offset into `symbols` (fixed) and current length (shrinks).
     starts: Vec<u32>,
     lens: Vec<u32>,
+    track_lens: bool,
 }
 
 impl WordArena {
-    pub fn with_capacity(words: usize, symbols: usize) -> Self {
+    /// `track_lens` must be true whenever `max_token_length` will be applied.
+    pub fn with_capacity(words: usize, symbols: usize, track_lens: bool) -> Self {
         Self {
             symbols: Vec::with_capacity(symbols),
+            sym_lens: if track_lens {
+                Vec::with_capacity(symbols)
+            } else {
+                Vec::new()
+            },
             starts: Vec::with_capacity(words),
             lens: Vec::with_capacity(words),
+            track_lens,
         }
     }
 
@@ -46,6 +66,11 @@ impl WordArena {
             "symbol arena exceeds 4G symbols"
         );
         self.symbols.extend(ids);
+        if self.track_lens {
+            // Every initial symbol covers exactly one source character,
+            // whatever decoration its token string carries.
+            self.sym_lens.resize(self.symbols.len(), 1);
+        }
         self.starts.push(start as u32);
         self.lens.push((self.symbols.len() - start) as u32);
     }
@@ -67,16 +92,12 @@ impl WordArena {
     /// Merge every non-overlapping occurrence of (c1, c2) in word `i`, left to
     /// right, appending pair-count deltas to `changes` as (pair, delta).
     ///
-    /// `token_chars[id]` is the char count of token `id`, used only for the
-    /// `max_len` guard. Pass `usize::MAX` as `max_len` to disable it, in which
-    /// case `token_chars` is never read.
+    /// `max_len` of `usize::MAX` disables the length guard, in which case
+    /// per-symbol lengths are neither tracked nor read.
     ///
     /// Parity notes (PARITY.md): the merged pair itself is never decremented;
     /// the left neighbor is read post-merge (may be a symbol produced earlier
     /// in this same pass); the `max_len` guard is strict `<`.
-    // The parameter list mirrors the merge's actual inputs; bundling them
-    // into a struct would only move the same data behind another name.
-    #[allow(clippy::too_many_arguments)]
     pub fn merge(
         &mut self,
         i: usize,
@@ -84,42 +105,49 @@ impl WordArena {
         c2: u32,
         new_id: u32,
         max_len: usize,
-        token_chars: &[u32],
         changes: &mut Vec<(Pair, i32)>,
     ) {
         let start = self.starts[i] as usize;
         let n = self.lens[i] as usize;
-        let syms = &mut self.symbols[start..start + n];
         let unbounded = max_len == usize::MAX;
-        let new_chars = if unbounded {
-            0
-        } else {
-            token_chars[new_id as usize] as usize
-        };
 
         let mut w = 0;
         let mut k = 0;
         while k < n {
-            if k + 1 < n && syms[k] == c1 && syms[k + 1] == c2 {
+            let a = self.symbols[start + k];
+            let pair_here = k + 1 < n && a == c1 && self.symbols[start + k + 1] == c2;
+            if pair_here {
+                // Length of the symbol being formed, summed as HF does.
+                let new_chars = if unbounded {
+                    0
+                } else {
+                    (self.sym_lens[start + k] + self.sym_lens[start + k + 1]) as usize
+                };
                 if w > 0 {
-                    let prev = syms[w - 1];
+                    let prev = self.symbols[start + w - 1];
                     changes.push(((prev, c1), -1));
-                    if unbounded || token_chars[prev as usize] as usize + new_chars < max_len {
+                    if unbounded || self.sym_lens[start + w - 1] as usize + new_chars < max_len {
                         changes.push(((prev, new_id), 1));
                     }
                 }
                 if k + 2 < n {
-                    let right = syms[k + 2];
+                    let right = self.symbols[start + k + 2];
                     changes.push(((c2, right), -1));
-                    if unbounded || token_chars[right as usize] as usize + new_chars < max_len {
+                    if unbounded || self.sym_lens[start + k + 2] as usize + new_chars < max_len {
                         changes.push(((new_id, right), 1));
                     }
                 }
-                syms[w] = new_id;
+                self.symbols[start + w] = new_id;
+                if !unbounded {
+                    self.sym_lens[start + w] = new_chars as u32;
+                }
                 w += 1;
                 k += 2;
             } else {
-                syms[w] = syms[k];
+                self.symbols[start + w] = a;
+                if !unbounded {
+                    self.sym_lens[start + w] = self.sym_lens[start + k];
+                }
                 w += 1;
                 k += 1;
             }
@@ -135,7 +163,7 @@ mod tests {
     // token_chars large enough for the small IDs used below; the tests that
     // exercise max_len set the entries they rely on.
     fn arena_of(ids: &[u32]) -> WordArena {
-        let mut a = WordArena::default();
+        let mut a = WordArena::with_capacity(1, ids.len(), true);
         a.push_word(ids.iter().copied());
         a
     }
@@ -145,7 +173,7 @@ mod tests {
     fn test_merge() {
         let mut a = arena_of(&[0, 1, 2, 2, 3]);
         let mut changes = vec![];
-        a.merge(0, 2, 2, 4, usize::MAX, &[], &mut changes);
+        a.merge(0, 2, 2, 4, usize::MAX, &mut changes);
         assert_eq!(a.symbols_of(0), &[0, 1, 4, 3]);
         assert_eq!(
             changes,
@@ -158,9 +186,8 @@ mod tests {
     #[test]
     fn test_merge_max_length() {
         let mut a = arena_of(&[0, 1, 2, 2, 3]);
-        let token_chars = [1, 1, 1, 1, 2];
         let mut changes = vec![];
-        a.merge(0, 2, 2, 4, 2, &token_chars, &mut changes);
+        a.merge(0, 2, 2, 4, 2, &mut changes);
         assert_eq!(a.symbols_of(0), &[0, 1, 4, 3]);
         assert_eq!(changes, &[((1, 2), -1), ((2, 3), -1)]);
     }
@@ -171,7 +198,7 @@ mod tests {
     fn test_merge_overlaps() {
         let mut a = arena_of(&[7, 7, 7, 7]);
         let mut changes = vec![];
-        a.merge(0, 7, 7, 9, usize::MAX, &[], &mut changes);
+        a.merge(0, 7, 7, 9, usize::MAX, &mut changes);
         assert_eq!(a.symbols_of(0), &[9, 9]);
         assert_eq!(
             changes,
@@ -184,7 +211,7 @@ mod tests {
     fn test_merge_odd_run() {
         let mut a = arena_of(&[7, 7, 7]);
         let mut changes = vec![];
-        a.merge(0, 7, 7, 9, usize::MAX, &[], &mut changes);
+        a.merge(0, 7, 7, 9, usize::MAX, &mut changes);
         assert_eq!(a.symbols_of(0), &[9, 7]);
         assert_eq!(changes, &[((7, 7), -1), ((9, 7), 1)]);
     }
@@ -193,12 +220,12 @@ mod tests {
     // and shrunk words never disturb their neighbors' slices.
     #[test]
     fn test_multiple_words_independent() {
-        let mut a = WordArena::default();
+        let mut a = WordArena::with_capacity(3, 11, true);
         a.push_word([5, 5, 6].iter().copied());
         a.push_word([5, 5, 5, 5].iter().copied());
         a.push_word([6, 5, 5].iter().copied());
         let mut changes = vec![];
-        a.merge(1, 5, 5, 9, usize::MAX, &[], &mut changes);
+        a.merge(1, 5, 5, 9, usize::MAX, &mut changes);
         assert_eq!(a.symbols_of(0), &[5, 5, 6]);
         assert_eq!(a.symbols_of(1), &[9, 9]);
         assert_eq!(a.symbols_of(2), &[6, 5, 5]);

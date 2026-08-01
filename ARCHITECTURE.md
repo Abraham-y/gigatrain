@@ -10,11 +10,12 @@ BENCHMARKS.md for measured results.
 Three stages, connected by bounded channels:
 
 ```
-reader ──chunks──> scanners ──packed batches──> shard owners
-(1 thread)         (N threads)                  (N threads)
+readers ──chunks──> scanners ──packed batches──> shard owners
+(up to 8)          (N/2 threads)                 (N/2 threads)
 ```
 
-- **reader** streams each file in 4 MB chunks, cutting at the last ASCII
+- **readers** stream byte ranges of each file in chunks sized from the input
+  (64 KB to 8 MB, see `Sizing::plan`), cutting at the last ASCII
   whitespace byte and carrying the remainder forward. ASCII whitespace is
   always a real word boundary: UTF-8 continuation bytes are never ASCII, and
   every ASCII whitespace char satisfies `char::is_whitespace`. Nothing is ever
@@ -22,7 +23,9 @@ reader ──chunks──> scanners ──packed batches──> shard owners
 - **scanners** split each chunk into words (`split.rs`), hash each word once,
   and route it to shard `hash % N`, packing into per-shard `WordBatch`
   buffers shipped at 64 KB.
-- **shard owners** count their shard into a `WordCounter`. Shards are disjoint,
+- **shard owners** count their shard into a `WordCounter`. The thread budget
+  is split between scanners and owners rather than sizing both at `nthreads`,
+  which measurably oversubscribed a 64-core machine. Shards are disjoint,
   so each unique word is stored exactly once machine-wide and the final
   combine is a concatenation with no lookups and no merge.
 
@@ -89,6 +92,7 @@ intuitive answer was wrong.
 
 - `cargo test` — unit tests including ports of HF's own trainer and word tests,
   and the splitter equivalence sweep.
-- `scripts/run_parity_ci.sh` — the milestone-2 gate. Five corpus
-  configurations against real `tokenizers` plus 1000 fuzz trials, all
-  compared merge-for-merge. **No trainer change lands without this green.**
+- `scripts/run_parity_ci.sh` — the milestone-2 gate. Seven corpus
+  configurations against real `tokenizers`, the ByteLevel codepoint sweep,
+  reproducibility checks for the decorated modes, and 1000 fuzz trials.
+  **No trainer change lands without this green.**

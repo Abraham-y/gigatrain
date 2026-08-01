@@ -86,6 +86,8 @@ pub fn read_range(
     rule: CutRule,
     tx: &SyncSender<Arc<Vec<u8>>>,
 ) -> Result<(), String> {
+    // `eof` is `n < chunk`, so a zero chunk would never terminate the loop.
+    assert!(chunk > 0, "read_range requires a non-zero chunk size");
     let mut file = File::open(path).map_err(|e| format!("opening {path}: {e}"))?;
 
     // A range starting mid-file usually begins inside a word, which belongs to
@@ -160,13 +162,11 @@ pub fn read_range(
             // We hold bytes past `end`: finish the word that started before
             // `end` and stop, so the next range does not double-count it.
             //
-            // Cut at the earliest point whose *next* token starts at or past
-            // `end`, so that token goes to the next range and is not counted
-            // twice. Cutting at index i leaves the next token starting at
-            // absolute `buf_start + keep_len(i)`, so the threshold depends on
-            // the rule: AfterWhitespace consumes the delimiter (next token at
-            // i+1), BeforeWhitespaceRun leaves the run in place (next token
-            // at i).
+            // Cut at the first boundary at or after `end - 1`, so the token
+            // that begins at `end` belongs to the next range rather than being
+            // counted by both. Both cut rules consume the matched byte, so the
+            // next token starts at `i + 1`; requiring `i + 1 >= end` gives the
+            // `end - 1` threshold.
             let jmin = (end - 1).saturating_sub(buf_start) as usize;
             match buf[jmin..].iter().position(|&b| is_cut_point(b, rule)) {
                 Some(rel) => {

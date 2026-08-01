@@ -68,8 +68,12 @@ Machinery that must be replicated structurally (but see reachability note):
   `tokenizer.json` emits unique pairs sorted by that rank
   (`serialization.rs`). Parity is defined against this serialized list.
 
-**Reachability**: we believe the duplicate/partial-pos paths are dead code in
-real training. Every merge applies to its complete position set, so a pair
+**Reachability**: these paths are dead code for *undecorated* training, but
+**live** once `continuing_subword_prefix` is set — a merge whose output id
+equals one of its inputs (e.g. `('##','##') -> '###'`) has been observed
+twice in one raw merge log. The serialized list dedupes, so output is
+unaffected, but the machinery is exercised. The argument below applies only
+to the undecorated case: Every merge applies to its complete position set, so a pair
 (x, yz) gains occurrences only at the single step where its constituent token
 is created; by induction no pair ever gains count after its creation step, no
 pair re-forms after being merged, and every heap entry's `pos` is complete.

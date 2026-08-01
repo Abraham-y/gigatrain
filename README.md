@@ -4,9 +4,13 @@ Fast BPE tokenizer **training** with byte-exact HuggingFace `tokenizers`
 parity.
 
 Trains a 32k vocabulary on **12.9 GB of FineWeb in 44 seconds** using 2.7 GB
-of RAM, producing a merge list byte-identical to
-`tokenizers.trainers.BpeTrainer`. On the same machine and corpus HuggingFace
-takes 12.6 minutes and 29.8 GB; SentencePiece segfaults.
+of RAM. On the same machine and corpus HuggingFace takes 12.6 minutes and
+29.8 GB; SentencePiece segfaults.
+
+Output is byte-identical to `tokenizers.trainers.BpeTrainer`, verified by CI
+on corpora up to 1 GB — see [Parity](#parity) for exactly what is and is not
+checked. The 12.9 GB run above is a timing measurement; its merge list was
+not diffed against HF.
 
 Whitespace, **ByteLevel (GPT-2 regex)** and WordPiece-style pretokenization.
 Zero runtime dependencies. Rust, with Python bindings.
@@ -19,18 +23,21 @@ The incumbents run out of memory before they run out of time:
 - [tokenizers #1681](https://github.com/huggingface/tokenizers/issues/1681):
   20 GB corpus OOMs on 1.5 TB and 2 TB machines. Closed on a workaround that
   commenters showed does not apply to training.
-- [tokenizers #1795](https://github.com/huggingface/tokenizers/issues/1795),
-  [#1824](https://github.com/huggingface/tokenizers/issues/1824): open. 100 GB
-  of RAM supports ~1.5 GB of Chinese JSONL; a 131k vocab exceeded 750 GB.
+- [tokenizers #1795](https://github.com/huggingface/tokenizers/issues/1795)
+  (open): 100 GB of RAM supports ~1.5 GB of Chinese JSONL.
+  [#1824](https://github.com/huggingface/tokenizers/issues/1824) (closed same
+  day it was filed): a 131k vocab exceeded 750 GB.
 - [sentencepiece #1021](https://github.com/google/sentencepiece/issues/1021):
-  31.2 GB corpus, vocab 4096, **1.8 TB** of memory, unfinished at 24 hours.
+  31.2 GB, vocab 4096, **1.8 TB** of memory, unfinished at 24 hours — though
+  note its log shows `Alphabet size=4` (genomic data), the same degenerate
+  low-alphabet shape this repo declines to over-read elsewhere.
 
-The universal workaround is to sample the corpus down. That has a real cost:
-Reddy et al. ([arXiv:2502.20273](https://arxiv.org/abs/2502.20273)) trained
-396 tokenizers from 1 GB to 900 GB and found vocabulary composition does not
-reach 90% overlap with the 900 GB tokenizer until **150–180 GB** — far above
-what anyone trains on. They could not use HuggingFace and wrote their own
-trainer.
+The universal workaround is to sample the corpus down. Reddy et al.
+([arXiv:2502.20273](https://arxiv.org/abs/2502.20273)) trained BPE, UnigramLM
+and WordPiece tokenizers on English data from 1 GB to **900 GB**, and report
+diminishing returns only beyond roughly 150 GB — far above what anyone
+actually trains on. They used HuggingFace for UnigramLM and WordPiece, but
+built their BPE trainer on `minbpe` rather than using HF's.
 
 **This is not a new algorithm.** Incremental pair counts with an inverted
 index and a lazy heap is standard, formalized by
@@ -42,16 +49,25 @@ architecture, memory layout, and an unusually thorough parity contract.
 
 **12.9 GB FineWeb, vocab 32000, 64-core x86-64 Linux, 192 GiB, glibc:**
 
-| trainer | wall | peak RSS | vs gigatrain | outcome |
+| trainer | pretokenizer | wall | peak RSS | outcome |
 |---|---|---|---|---|
-| **gigatrain** (ByteLevel) | **43.8 s** | **2.7 GB** | — | ok |
-| gigatrain (whitespace) | 129.4 s | 6.7 GB | 3.0x | ok |
-| SentencePiece v0.2.2 | 135.0 s | 20.0 GB | — | **SIGSEGV** |
-| HuggingFace 0.22.2 | 754.9 s | 29.8 GB | 17.2x | ok |
-| rustbpe | 975.4 s | 5.3 GB | 22.3x | ok |
+| **gigatrain** | ByteLevel | **43.8 s** | 2.7 GB | ok |
+| **gigatrain** | whitespace | **129.4 s** | 6.7 GB | ok |
+| SentencePiece v0.2.2 | its own | 135.0 s | 20.0 GB | **SIGSEGV** |
+| HuggingFace 0.22.2 | whitespace | 754.9 s | 29.8 GB | ok |
+| rustbpe | GPT-4 regex | 975.4 s | 5.3 GB | ok |
 
-**1 GB, same machine:** gigatrain 7.4 s · gigatoken 18.8 s · ffbpe 65.4 s ·
-rustbpe 88.2 s · SentencePiece 112.7 s · HuggingFace 244.4 s.
+**The like-for-like comparison is whitespace against whitespace: 129.4 s vs
+754.9 s, i.e. 5.8x**, on identical output. gigatrain's ByteLevel mode is
+faster still (43.8 s, 17.2x HF's time) but produces a different tokenizer, so
+quoting 17.2x as a speedup would break this repo's own rule that a speedup
+with different output is not a speedup.
+
+**1 GB on the same 64-core box:** gigatrain 7.4 s (ByteLevel) / 20.3 s
+(whitespace) · rustbpe 88.2 s · SentencePiece 112.7 s · HuggingFace 244.4 s.
+gigatoken (18.8 s) and ffbpe (65.4 s) were measured on the 10-core laptop
+instead, where gigatrain is 10.2 s — see [PRIOR_ART.md](PRIOR_ART.md) for
+those same-machine pairings.
 
 ### HuggingFace gets slower as you add cores
 
@@ -59,12 +75,13 @@ The same 100 MB corpus, same HF version: **9.7 s on 10 cores, 181 s on 64**.
 At 1 GB, 61.2 s becomes 244.4 s. Its rayon-parallel pair counting reduces
 per-thread hash maps, so more cores means more merging work, not less.
 
-This is the pathology behind
+This is plausibly a contributing factor in
 [#1313](https://github.com/huggingface/tokenizers/issues/1313) — 13 GB on
-256 threads, unfinished after 10 hours — closed as stale in 2023 without
-diagnosis. It is independently triangulated: published HF figures for 1 GB
-rise monotonically with core count across three unrelated sources (59 s at
-unstated cores, 97.7 s at 36, 244.4 s at 64).
+256 threads, unfinished after 10 hours, closed as stale in 2023 without
+diagnosis. It is not a reproduction of that issue, which used `vocab_size=512`
+on unsegmented data; see the retraction in [BENCHMARKS.md](BENCHMARKS.md).
+The measurement here stands on its own: same binary, same corpus, same
+version, only the core count changed.
 
 gigatrain scales the other way: 14.5 s at 1 thread to 4.7 s at 48, flat
 thereafter.
@@ -83,18 +100,24 @@ document does not exist anywhere else, including HuggingFace's own docs.
 
 `scripts/run_parity_ci.sh` gates every commit:
 
-- nine corpus configurations: 32k vocab, special tokens including ones that
+- seven corpus configurations: 32k vocab, special tokens including ones that
   collide with merge strings, `max_token_length`, `min_frequency`,
   `limit_alphabet`, English + Chinese, and ByteLevel
 - the ByteLevel pretokenizer diffed against HF over every non-surrogate BMP
-  codepoint in 8 contexts (~508k cases), plus real corpora
+  codepoint from U+0020 up, in 8 contexts (~508k cases), plus real corpora
 - 1000 randomized fuzz trials biased toward count ties and same-char runs
 - output identical across 1, 2, 3, 7 and 16 threads, in every mode
-- the Python bindings' `tokenizer.json` round-tripped through
-  `tokenizers.Tokenizer.from_file()` and checked to encode identical ids
 
-CI runs the unit tests on Linux, macOS and Windows, and the parity gate on
-Linux/glibc.
+A separate CI job builds the wheel and round-trips the Python bindings'
+`tokenizer.json` through `tokenizers.Tokenizer.from_file()`, checking it
+encodes identical ids. CI runs the unit tests on Linux, macOS and Windows,
+and the parity gate on Linux/glibc.
+
+**Scale of verification.** The parity gate's largest corpus is 4.9 MB
+(synthetic, vocab 32k). Merge lists have additionally been diffed against HF
+at 100 MB and 1 GB of FineWeb (whitespace) and 100 MB (ByteLevel), by
+`scripts/benchmark.py` and `scripts/parity_check.py`. Nothing above 1 GB has
+been diffed — at 12.9 GB only timing was measured.
 
 ## Usage
 
@@ -208,13 +231,16 @@ the findings that undercut this project. In short:
   Measured here, its merges match HF exactly on LF corpora but diverge from
   rank 0 on CRLF corpora, because it does not replicate HF's line-at-a-time
   file feeding.
-- **[ffbpe](https://github.com/tokn-ai/ffbpe)** (July 2026) advertises 1 GiB
-  in 5.58 s, but at vocab 10k on Chinese text from a precomputed bigram
-  inventory. Measured end-to-end from raw text at vocab 32k it is 65.4 s.
+- **[ffbpe](https://github.com/tokn-ai/ffbpe)** (July 2026) reports 1 GiB in
+  5.58 s in a bounded-memory table — at vocab 10k on Chinese text from a
+  precomputed bigram inventory, not as a headline speed claim. Measured
+  end-to-end from raw text at vocab 32k it is 65.4 s.
 - **[fast-bytelevel-bpe-go](https://github.com/yunnian/fast-bytelevel-bpe-go)**
   is the only other project verifying byte-exact HF parity.
 - **SentencePiece got ~20x faster in v0.2.2** (July 2026). That is against its
-  own past, not the field; it remains slower than HuggingFace here.
+  own past, not the field. It is slower than HuggingFace on the 10-core
+  laptop, and faster than HF on the 64-core box — because HF degrades with
+  core count and SentencePiece's BPE trainer is single-threaded.
 - **GPU BPE *training* does not exist.** Everything branded that way encodes
   with a pre-trained merge table.
 

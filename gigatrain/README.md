@@ -2,9 +2,9 @@
 
 Fast BPE tokenizer training with byte-exact HuggingFace `tokenizers` parity.
 
-Trains a 32k vocabulary on 12.9 GB of FineWeb in 85 seconds using 2.2 GB of
-RAM, producing a merge list byte-identical to
-`tokenizers.trainers.BpeTrainer`.
+Trains a 32k vocabulary on 12.9 GB of FineWeb in 44 seconds using 2.7 GB of
+RAM on a 64-core Linux box. Output is byte-identical to
+`tokenizers.trainers.BpeTrainer`, verified by CI on corpora up to 1 GB.
 
 ```python
 import gigatrain

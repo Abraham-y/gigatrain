@@ -98,9 +98,9 @@ fn train_bpe(
     // Training is pure Rust and can take minutes; release the GIL so other
     // Python threads keep running.
     let result = py.detach(move || {
-        let table = crate::pipeline::count_words(&files, nthreads, bytelevel);
-        train(table, &config)
+        crate::pipeline::count_words(&files, nthreads, bytelevel).map(|table| train(table, &config))
     });
+    let result = result.map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     let vocab = PyDict::new(py);
     for (id, token) in result.vocab.iter().enumerate() {
@@ -158,16 +158,17 @@ fn train_tokenizer(
     let nthreads = resolve_threads(threads);
 
     let json = py.detach(move || {
-        let table = crate::pipeline::count_words(&files, nthreads, bytelevel);
+        let table = crate::pipeline::count_words(&files, nthreads, bytelevel)?;
         let result = train(table, &config);
-        crate::tokenizer_json::render(
+        Ok::<String, String>(crate::tokenizer_json::render(
             &result,
             &specials,
             bytelevel,
             prefix_for_json.as_deref(),
             suffix_for_json.as_deref(),
-        )
+        ))
     });
+    let json = json.map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     std::fs::write(&output, json)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("writing {output}: {e}")))

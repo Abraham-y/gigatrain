@@ -140,14 +140,11 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
 
     let mut word_to_id: FxHashMap<String, u32> = FxHashMap::default();
     let mut id_to_word: Vec<String> = Vec::with_capacity(config.vocab_size);
-    // Char count per token ID; equals HF's per-symbol `len` (see word.rs).
-    let mut token_chars: Vec<u32> = Vec::with_capacity(config.vocab_size);
 
     // 1. Special tokens, in order, deduplicated.
     for token in &config.special_tokens {
         if !word_to_id.contains_key(token) {
             id_to_word.push(token.clone());
-            token_chars.push(token.chars().count() as u32);
             word_to_id.insert(token.clone(), (id_to_word.len() - 1) as u32);
         }
     }
@@ -184,7 +181,6 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
             let s = c.to_string();
             if !word_to_id.contains_key(&s) {
                 id_to_word.push(s.clone());
-                token_chars.push(1);
                 word_to_id.insert(s, (id_to_word.len() - 1) as u32);
             }
         }
@@ -222,7 +218,10 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
     // but the token entered into the vocabulary is the decorated form, which
     // may be a new entry. Its length is 1 regardless of decoration: HF counts
     // source characters covered, not the length of the token string, so "##a"
-    // has length 1. `token_chars` therefore stays exactly HF's `Symbol::len`.
+    // has length 1, which the arena records per symbol when the length guard
+    // is in use (see word.rs — a token id alone is not enough, since with
+    // decoration one id can be reached both as an initial symbol and as a
+    // merged token).
     //
     // Decorated tokens are registered in sorted order, in a pass before
     // tokenization, so their ids do not depend on the order words happen to
@@ -232,7 +231,11 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
     // PARITY.md and huggingface/tokenizers#2066); parity is impossible against
     // a moving target, so we choose reproducibility instead.
     let n_words = word_table.len();
-    let mut words = WordArena::with_capacity(n_words, word_table.total_bytes());
+    let mut words = WordArena::with_capacity(
+        n_words,
+        word_table.total_bytes(),
+        max_token_length != usize::MAX,
+    );
     let mut counts: Vec<u64> = Vec::with_capacity(n_words);
     let mut ids: Vec<u32> = Vec::new();
     let mut decorated_buf = String::new();
@@ -271,7 +274,6 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
         for token in needed {
             let id = id_to_word.len() as u32;
             id_to_word.push(token.clone());
-            token_chars.push(1);
             word_to_id.insert(token, id);
         }
     }
@@ -396,7 +398,6 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
             .unwrap_or(id_to_word.len() as u32);
         if !word_to_id.contains_key(&new_token) {
             id_to_word.push(new_token.clone());
-            token_chars.push(token_chars[top.pair.0 as usize] + token_chars[top.pair.1 as usize]);
             word_to_id.insert(new_token, new_token_id);
         }
         merges.push((top.pair, new_token_id));
@@ -411,7 +412,6 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
                 top.pair.1,
                 new_token_id,
                 max_token_length,
-                &token_chars,
                 &mut changes,
             );
             for &(pair, change) in &changes {

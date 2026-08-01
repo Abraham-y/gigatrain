@@ -1,7 +1,15 @@
 # Benchmarks
 
-All runs via `scripts/benchmark.py`, which reports wall time, peak RSS, and
-merge-list parity together (a speedup with different output is not a speedup).
+Harnesses: `scripts/benchmark.py` (gigatrain vs HF, reports wall time, peak
+RSS and merge-list parity together), `scripts/modal_benchmark.py` (all
+trainers on a rented many-core Linux box), and per-trainer CLIs under
+`scripts/` for rustbpe, SentencePiece, gigatoken and ffbpe. Only
+`benchmark.py` verifies parity; the multi-trainer runs discard stdout and
+measure time and memory only.
+
+**A speedup with different output is not a speedup.** Where a row compares
+different pretokenizers, or a trainer that does not produce an HF-compatible
+merge list, it is labelled as such and is a time/memory comparison only.
 Corpus: FineWeb sample-10BT slices (real web text), whitespace pretokenization,
 vocab 32000, one special token.
 
@@ -71,10 +79,17 @@ than the older published numbers. Measured here, vocab 32000, same machine,
 with `--max_sentence_length` raised from its 4192-byte default (which
 silently drops most FineWeb documents) and `train_extremely_large_corpus`:
 
+All 10-core macOS, whitespace for gigatrain and HF:
+
 | corpus | SentencePiece v0.2.2 | HF 0.22.2 | gigatrain |
 |---|---|---|---|
 | 100 MB | 13.7 s / 539 MB | 9.7 s / 1.0 GB | 1.7 s / 419 MB |
 | 1 GB | 112.7 s / 3.0 GB | 61.2 s / 4.7 GB | 9.4 s / 1.3 GB |
+
+SentencePiece measured 112.7 s at 1 GB on *both* this laptop and the 64-core
+Linux box. Its BPE trainer is single-threaded, so both machines do the same
+one-core work; peak RSS differs (3.0 vs 3.6 GB), confirming these are separate
+runs rather than a transcription error.
 
 The 20x was against older SentencePiece, not the field: post-optimization it
 is still ~2x slower than HuggingFace at these sizes, and ~12x slower than
@@ -133,20 +148,26 @@ in its own change with heavy fuzzing.
 could not do: with enough RAM, HuggingFace and SentencePiece are no longer
 swap-bound, so these are real timings rather than "it thrashed".
 
-| trainer | wall | peak RSS | vs gigatrain | outcome |
+| trainer | pretokenizer | wall | peak RSS | outcome |
 |---|---|---|---|---|
-| **gigatrain (ByteLevel)** | **43.8 s** | **2.7 GB** | — | ok |
-| gigatrain (whitespace) | 129.4 s | 6.7 GB | 3.0x | ok |
-| SentencePiece v0.2.2 | 135.0 s | 20.0 GB | — | **SIGSEGV** |
-| HuggingFace | 754.9 s | 29.8 GB | **17.2x** | ok |
-| rustbpe | 975.4 s | 5.3 GB | **22.3x** | ok |
+| **gigatrain** | ByteLevel | **43.8 s** | 2.7 GB | ok |
+| **gigatrain** | whitespace | **129.4 s** | 6.7 GB | ok |
+| SentencePiece v0.2.2 | its own | 135.0 s | 20.0 GB | **SIGSEGV** |
+| HuggingFace | whitespace | 754.9 s | 29.8 GB | ok |
+| rustbpe | GPT-4 regex | 975.4 s | 5.3 GB | ok |
+
+**Like-for-like is whitespace vs whitespace: 129.4 s against 754.9 s, 5.8x**,
+with identical output. The 43.8 s ByteLevel figure is 17.2x HF's wall time but
+produces a different tokenizer, so it is not a speedup number. `hf_train_cli.py`
+hardcodes `WhitespaceSplit`, so no HF ByteLevel figure exists at this size.
 
 Three things worth stating plainly.
 
 **HuggingFace does finish, given 192 GiB** — in 12.6 minutes, using 29.8 GB of
-resident memory, 11x more than gigatrain. On a 34 GB laptop the same job never
-completed in an hour. So the honest claim is not "HF cannot do this"; it is
-that HF needs roughly an order of magnitude more memory and 17x the time.
+resident memory, 11x more than gigatrain's whitespace mode uses (4.4x) and
+ByteLevel mode (11x). On a 34 GB laptop the same job never completed in an
+hour. So the honest claim is not "HF cannot do this"; it is that HF needs
+several times the memory and, like for like, 5.8x the time.
 
 **SentencePiece crashed.** It ran 135 s and died with SIGSEGV (rc=139) at
 20 GB resident, having been given 192 GiB. This matches the segfault reported

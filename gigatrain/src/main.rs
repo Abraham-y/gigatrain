@@ -39,22 +39,30 @@ fn main() {
     let mut inputs: Vec<String> = vec![];
 
     let mut args = std::env::args().skip(1);
+    // Parse helpers report like every other error path rather than panicking.
+    fn num<T: std::str::FromStr>(flag: &str, raw: &str) -> T {
+        raw.parse()
+            .unwrap_or_else(|_| die(&format!("{flag} expects a number, got {raw:?}")))
+    }
     while let Some(arg) = args.next() {
         let mut val = |name: &str| {
             args.next()
                 .unwrap_or_else(|| die(&format!("{name} requires a value")))
         };
         match arg.as_str() {
-            "--vocab-size" => vocab_size = Some(val("--vocab-size").parse().unwrap()),
-            "--min-frequency" => config.min_frequency = val("--min-frequency").parse().unwrap(),
+            "--vocab-size" => vocab_size = Some(num("--vocab-size", &val("--vocab-size"))),
+            "--min-frequency" => {
+                config.min_frequency = num("--min-frequency", &val("--min-frequency"))
+            }
             "--special" => config.special_tokens.push(val("--special")),
             "--max-token-length" => {
-                config.max_token_length = Some(val("--max-token-length").parse().unwrap())
+                config.max_token_length =
+                    Some(num("--max-token-length", &val("--max-token-length")))
             }
             "--limit-alphabet" => {
-                config.limit_alphabet = Some(val("--limit-alphabet").parse().unwrap())
+                config.limit_alphabet = Some(num("--limit-alphabet", &val("--limit-alphabet")))
             }
-            "--threads" => threads = Some(val("--threads").parse().unwrap()),
+            "--threads" => threads = Some(num("--threads", &val("--threads"))),
             "--pretokenizer" => {
                 bytelevel = match val("--pretokenizer").as_str() {
                     "bytelevel" => true,
@@ -94,14 +102,14 @@ fn main() {
             let (word, count) = line
                 .rsplit_once('\t')
                 .unwrap_or_else(|| die(&format!("bad TSV line: {line:?}")));
-            acc.add(word, count.parse().unwrap());
+            acc.add(word, num("--words-tsv count", count));
         }
         acc.into_table()
     } else {
         if inputs.is_empty() {
             die("no input files (or --words-tsv) given");
         }
-        gigatrain::pipeline::count_words(&inputs, nthreads, bytelevel)
+        gigatrain::pipeline::count_words(&inputs, nthreads, bytelevel).unwrap_or_else(|e| die(&e))
     };
     let t_phase1 = t0.elapsed();
     let word_count = word_table.len();
