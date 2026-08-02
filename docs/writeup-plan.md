@@ -312,14 +312,40 @@ a small model trained on a fixed budget with each tokenizer.
   building non-English or domain models — who are exactly the people who
   already train their own vocabularies.
 
-### The order I'd actually do it in
+### The cheap sweep has now been run — see docs/sweep-results.md
 
-1. Ship the tool (blog + X). It stands alone and takes a week.
-2. Run the cheap intrinsic sweep — sizes × vocab sizes × 3 compositions.
-   Days of compute, not weeks. Publish the curves as a follow-up post.
-3. Decide on the paper once you can see whether the curves are interesting.
-   If saturation lands in the same place for every domain, there is no paper.
-   If it doesn't, there is a good one.
+English FineWeb, 100 MB to 10 GB, vocab 8k/32k/128k. The result reframes the
+paper:
 
-That sequencing means the tool gets used regardless, and the paper is a bet
-placed only after the cheap experiment says whether it's worth making.
+- Fertility and compression **saturate almost immediately**: 100x more data
+  moves fertility by 0.06–0.5%.
+- Vocabulary identity **does not** saturate, and the gap grows with vocab
+  size: at 128k, 100 MB recovers only 81% of the 10 GB vocabulary.
+- So at 128k vocab, 100x less data gives **19% different tokens and 0.5%
+  different fertility**.
+
+This weakens the "you need more data" motivation for English, and it should
+be stated that way in the blog post rather than omitted.
+
+But it sharpens the paper into a better question:
+
+**"Tokenizer vocabularies differ substantially without differing measurably.
+Does the difference matter?"**
+
+That is a stronger paper than a saturation curve, because it is a critique of
+how the field evaluates tokenizers rather than another benchmark. Two
+outcomes, both publishable: if downstream loss is also flat, then vocabulary
+identity genuinely does not matter and everyone can stop worrying about
+tokenizer training data — a useful negative result. If it is not flat, then
+fertility is an inadequate proxy and the field has been optimising the wrong
+metric.
+
+### The order I'd actually do it in now
+
+1. Ship the tool (blog + X). It stands alone.
+2. Extend the sweep to **code and multilingual** corpora — English web text
+   is the most homogeneous case and the least likely to show an effect. This
+   is still cheap, and it is where the tail plausibly matters.
+3. Only then commit to the downstream-loss arm, which is the expensive part
+   and the part that decides whether the paper is interesting or merely
+   tidy.
