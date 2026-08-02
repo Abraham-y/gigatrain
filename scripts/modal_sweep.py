@@ -72,7 +72,7 @@ SOURCES = {
 }
 
 
-def _resolve_urls(composition, per_config=2):
+def _resolve_urls(composition, per_config=8):
     """Ask the datasets-server which parquet shards actually exist."""
     import json
     import urllib.request
@@ -149,8 +149,24 @@ def _build_corpora(composition, sizes, heldout_mb):
     largest = targets[-1]
     paths = {s: f"{root}/corpus_{s}mb.txt" for s in targets}
     heldout = f"{root}/heldout_{heldout_mb}mb.txt"
-    if all(os.path.exists(p) for p in paths.values()) and os.path.exists(heldout):
+
+    def usable(path, want_bytes):
+        # Existence is not enough: a crashed earlier run leaves zero-byte
+        # corpora behind, and reusing those silently trains every size on an
+        # empty file — which produces identical tokenizers and looks like a
+        # real (flat) result rather than a failure.
+        try:
+            return os.path.getsize(path) >= 0.9 * want_bytes
+        except OSError:
+            return False
+
+    if all(usable(paths[s], s * 1_000_000) for s in targets) and usable(
+        heldout, heldout_mb * 1_000_000 * 0.5
+    ):
         return paths, heldout
+    for p_ in list(paths.values()):
+        if os.path.exists(p_):
+            os.remove(p_)
 
     # Pull only as many source files as the largest slice needs, plus one
     # spare reserved for held-out text. For multilingual every language file
@@ -211,11 +227,18 @@ def _build_corpora(composition, sizes, heldout_mb):
                         handles[s].close()
             if all(done.values()):
                 break
+    short = []
     for s in targets:
         if not done[s]:
             handles[s].close()
-            print(f"  WARNING: {composition} {s}MB only reached "
-                  f"{written/1e6:.0f}MB", flush=True)
+            short.append(s)
+    if short:
+        raise RuntimeError(
+            f"{composition}: sources yielded only {written/1e6:.0f} MB, "
+            f"short of {short}. Raise per_config in _resolve_urls or drop "
+            f"those sizes; a truncated corpus would silently look like a "
+            f"flat result."
+        )
 
     if not os.path.exists(heldout):
         parts, hb = [], 0
