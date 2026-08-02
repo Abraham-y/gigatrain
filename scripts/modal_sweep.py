@@ -2,6 +2,12 @@
 """Intrinsic sweep: does more training data change the tokenizer, and where
 does it stop?
 
+Three compositions, because English web text is the most homogeneous case and
+the least likely to show an effect:
+  english      FineWeb (English web text)
+  code         codeparrot/github-code-clean, Python
+  multilingual FineWeb-2, five languages across four scripts, interleaved
+
 The question this settles, cheaply, before committing to anything larger:
 vocabularies are trained on nested corpora of increasing size, and each is
 compared against the one trained on the most data. If the curves saturate at
@@ -53,8 +59,131 @@ def _sh(cmd, **kw):
     return subprocess.run(cmd, shell=True, text=True, **kw)
 
 
+# Parquet sources per composition. Resolved through the datasets-server, so
+# no auth token is needed.
+SOURCES = {
+    "english": [
+        "https://huggingface.co/datasets/HuggingFaceFW/fineweb/resolve/main/"
+        f"sample/10BT/{i:03d}_00000.parquet"
+        for i in range(6)
+    ],
+    "code": [
+        "https://huggingface.co/api/datasets/codeparrot/github-code-clean/"
+        f"parquet/Python-all/train/{i}.parquet"
+        for i in range(6)
+    ],
+    # Five languages, four scripts. Interleaved so every slice is balanced
+    # rather than being one language followed by another.
+    "multilingual": [
+        "https://huggingface.co/api/datasets/HuggingFaceFW/fineweb-2/parquet/"
+        f"{lang}/train/{i}.parquet"
+        for i in range(2)
+        for lang in ["deu_Latn", "rus_Cyrl", "arb_Arab", "hin_Deva", "jpn_Jpan"]
+    ],
+}
+
+
+def _build_corpora(composition, sizes, heldout_mb):
+    """Download and slice, returning (corpus paths by size, held-out path).
+
+    Slices are nested: the 100 MB corpus is a prefix of the 1 GB one, so size
+    is the only variable. Held-out text comes from the last source file, which
+    no training slice reaches.
+    """
+    import os
+
+    import pyarrow.parquet as pq
+
+    urls = SOURCES[composition]
+    root = f"{DATA}/{composition}"
+    os.makedirs(f"{root}/parquet", exist_ok=True)
+
+    targets = sorted(sizes)
+    largest = targets[-1]
+    paths = {s: f"{root}/corpus_{s}mb.txt" for s in targets}
+    heldout = f"{root}/heldout_{heldout_mb}mb.txt"
+    if all(os.path.exists(p) for p in paths.values()) and os.path.exists(heldout):
+        return paths, heldout
+
+    # Pull only as many source files as the largest slice needs, plus one
+    # spare reserved for held-out text. For multilingual every language file
+    # is fetched regardless: stopping early would silently make the corpus
+    # two languages instead of five, and language balance is the whole point
+    # of that arm.
+    need_bytes = largest * 1_000_000
+    fetch_all = composition == "multilingual"
+    local = []
+    for i, url in enumerate(urls):
+        f = f"{root}/parquet/{i:03d}.parquet"
+        if not os.path.exists(f):
+            _sh(f"curl -sL -o {f} '{url}'", check=True)
+        local.append(f)
+        got = sum(os.path.getsize(x) for x in local)
+        # Parquet is compressed ~2-3x, so stop once there is comfortably
+        # enough, keeping one file back for held-out.
+        if not fetch_all and got * 2 > need_bytes and len(local) >= 2:
+            break
+
+    text_col = "content" if composition == "code" else "text"
+
+    def docs_of(path):
+        pf = pq.ParquetFile(path)
+        cols = pf.schema_arrow.names
+        col = text_col if text_col in cols else ("text" if "text" in cols else cols[0])
+        for batch in pf.iter_batches(columns=[col], batch_size=512):
+            for t in batch.column(col).to_pylist():
+                if t:
+                    yield t
+
+    # Round-robin across source files so every prefix is balanced across
+    # languages (and across repos, for code) rather than being the first file
+    # followed by the second.
+    streams = [docs_of(f) for f in local[:-1]]
+    handles = {s: open(paths[s], "w") for s in targets}
+    done = {s: False for s in targets}
+    written = 0
+    while streams and not all(done.values()):
+        for stream in list(streams):
+            try:
+                t = next(stream)
+            except StopIteration:
+                streams.remove(stream)
+                continue
+            doc = t + "\n\n"
+            written += len(doc.encode())
+            for s in targets:
+                if not done[s]:
+                    handles[s].write(doc)
+                    if written >= s * 1_000_000:
+                        done[s] = True
+                        handles[s].close()
+            if all(done.values()):
+                break
+    for s in targets:
+        if not done[s]:
+            handles[s].close()
+            print(f"  WARNING: {composition} {s}MB only reached "
+                  f"{written/1e6:.0f}MB", flush=True)
+
+    if not os.path.exists(heldout):
+        parts, hb = [], 0
+        pf = pq.ParquetFile(local[-1])
+        cols = pf.schema_arrow.names
+        col = text_col if text_col in cols else ("text" if "text" in cols else cols[0])
+        for batch in pf.iter_batches(columns=[col], batch_size=512):
+            for t in batch.column(col).to_pylist():
+                if not t:
+                    continue
+                parts.append(t)
+                hb += len(t.encode())
+            if hb >= heldout_mb * 1_000_000:
+                break
+        open(heldout, "w").write("\n\n".join(parts))
+    return paths, heldout
+
+
 @app.function(volumes={DATA: volume}, timeout=24 * 3600, cpu=32, memory=131072)
-def sweep(sizes, vocabs, heldout_mb=20):
+def sweep(sizes, vocabs, heldout_mb=20, composition="english"):
     import json
     import os
     import time
@@ -69,37 +198,8 @@ def sweep(sizes, vocabs, heldout_mb=20):
     from tokenizers import Tokenizer
 
     # --- corpora -------------------------------------------------------
-    largest = max(sizes)
-    n_parquet = (largest // 4000) + 2  # +1 spare for held-out
-    os.makedirs(f"{DATA}/parquet", exist_ok=True)
-    for i in range(n_parquet):
-        path = f"{DATA}/parquet/{i:03d}.parquet"
-        if not os.path.exists(path):
-            url = ("https://huggingface.co/datasets/HuggingFaceFW/fineweb/"
-                   f"resolve/main/sample/10BT/{i:03d}_00000.parquet")
-            _sh(f"curl -sL -o {path} '{url}'", check=True)
-
-    missing = [s for s in sizes if not os.path.exists(f"{DATA}/fineweb_{s}mb.txt")]
-    if missing:
-        _sh(f"python3 /repo/scripts/slice_fineweb.py {DATA}/parquet/*.parquet "
-            f"--sizes-mb {' '.join(map(str, missing))} --out-dir {DATA}", check=True)
-
-    # Held-out from the LAST parquet, which no training slice reaches.
-    heldout = f"{DATA}/heldout_{heldout_mb}mb.txt"
-    if not os.path.exists(heldout):
-        import pyarrow.parquet as pq
-
-        written, parts = 0, []
-        pf = pq.ParquetFile(f"{DATA}/parquet/{n_parquet - 1:03d}.parquet")
-        for batch in pf.iter_batches(columns=["text"], batch_size=512):
-            for t in batch.column("text").to_pylist():
-                parts.append(t)
-                written += len(t.encode())
-                if written >= heldout_mb * 1_000_000:
-                    break
-            if written >= heldout_mb * 1_000_000:
-                break
-        open(heldout, "w").write("\n\n".join(parts))
+    print(f"=== composition: {composition}", flush=True)
+    corpora, heldout = _build_corpora(composition, sizes, heldout_mb)
     held_text = open(heldout, encoding="utf-8", errors="ignore").read()
     held_words = len(held_text.split())
     held_bytes = len(held_text.encode())
@@ -114,7 +214,7 @@ def sweep(sizes, vocabs, heldout_mb=20):
             out = f"/tmp/tok_{s}_{v}.json"
             t0 = time.perf_counter()
             gigatrain.train_tokenizer(
-                [f"{DATA}/fineweb_{s}mb.txt"], v, out,
+                [corpora[s]], v, out,
                 pretokenizer="bytelevel", special_tokens=["<|endoftext|>"],
             )
             secs = time.perf_counter() - t0
@@ -143,7 +243,7 @@ def sweep(sizes, vocabs, heldout_mb=20):
             tok = Tokenizer.from_file(models[(s, v)])
             ids = tok.encode(held_text).ids
             rows.append({
-                "size_mb": s, "vocab": v,
+                "composition": composition, "size_mb": s, "vocab": v,
                 "vocab_overlap": round(overlap, 4),
                 "merge_prefix": prefix,
                 "merge_prefix_frac": round(prefix / max(len(ref_merges), 1), 4),
@@ -161,19 +261,27 @@ def sweep(sizes, vocabs, heldout_mb=20):
 
 
 @app.local_entrypoint()
-def main(sizes: str = "100,300,1000,3000,10000",
-         vocabs: str = "8000,32000,128000"):
+def main(sizes: str = "100,300,1000,3000",
+         vocabs: str = "8000,32000,128000",
+         compositions: str = "english,code,multilingual"):
     size_list = [int(x) for x in sizes.split(",")]
     vocab_list = [int(x) for x in vocabs.split(",")]
-    rows = sweep.remote(size_list, vocab_list)
+
+    rows = []
+    for comp in compositions.split(","):
+        rows.extend(sweep.remote(size_list, vocab_list, 20, comp))
 
     print("\n================ INTRINSIC SWEEP ================")
-    for v in vocab_list:
-        print(f"\nvocab {v} (reference = {max(size_list)} MB):")
-        print(f"  {'corpus':>9} {'overlap':>9} {'merge-prefix':>14} "
-              f"{'fertility':>10} {'bytes/tok':>10} {'train':>8}")
-        for r in [x for x in rows if x["vocab"] == v]:
-            print(f"  {r['size_mb']:>7} MB {r['vocab_overlap']:>9.3f} "
-                  f"{r['merge_prefix']:>8} ({r['merge_prefix_frac']:>4.2f}) "
-                  f"{r['fertility']:>10.3f} {r['bytes_per_token']:>10.3f} "
-                  f"{r['train_seconds']:>7.1f}s")
+    import json as _json
+    print("RAW:", _json.dumps(rows))
+    for comp in compositions.split(","):
+        for v in vocab_list:
+            sub = [x for x in rows if x["vocab"] == v and x["composition"] == comp]
+            if not sub:
+                continue
+            print(f"\n{comp} / vocab {v} (reference = {max(size_list)} MB):")
+            print(f"  {'corpus':>9} {'overlap':>9} {'fertility':>10} "
+                  f"{'bytes/tok':>10}")
+            for r in sub:
+                print(f"  {r['size_mb']:>7} MB {r['vocab_overlap']:>9.3f} "
+                      f"{r['fertility']:>10.3f} {r['bytes_per_token']:>10.3f}")
