@@ -59,28 +59,75 @@ def _sh(cmd, **kw):
     return subprocess.run(cmd, shell=True, text=True, **kw)
 
 
-# Parquet sources per composition. Resolved through the datasets-server, so
-# no auth token is needed.
+# Composition -> (dataset, list of configs). URLs are resolved from the
+# datasets-server at run time rather than guessed: shard counts differ per
+# config, and a guessed index returns a JSON error that `curl -s` will happily
+# write to disk as a "parquet" file.
+LANGS = ["deu_Latn", "rus_Cyrl", "arb_Arab", "hin_Deva", "jpn_Jpan"]
 SOURCES = {
-    "english": [
-        "https://huggingface.co/datasets/HuggingFaceFW/fineweb/resolve/main/"
-        f"sample/10BT/{i:03d}_00000.parquet"
-        for i in range(6)
-    ],
-    "code": [
-        "https://huggingface.co/api/datasets/codeparrot/github-code-clean/"
-        f"parquet/Python-all/train/{i}.parquet"
-        for i in range(6)
-    ],
-    # Five languages, four scripts. Interleaved so every slice is balanced
-    # rather than being one language followed by another.
-    "multilingual": [
-        "https://huggingface.co/api/datasets/HuggingFaceFW/fineweb-2/parquet/"
-        f"{lang}/train/{i}.parquet"
-        for i in range(2)
-        for lang in ["deu_Latn", "rus_Cyrl", "arb_Arab", "hin_Deva", "jpn_Jpan"]
-    ],
+    "english": ("HuggingFaceFW/fineweb", [None]),
+    "code": ("codeparrot/github-code-clean", ["Python-all"]),
+    # Five languages, four scripts.
+    "multilingual": ("HuggingFaceFW/fineweb-2", LANGS),
 }
+
+
+def _resolve_urls(composition, per_config=2):
+    """Ask the datasets-server which parquet shards actually exist."""
+    import json
+    import urllib.request
+
+    if composition == "english":
+        # FineWeb's 10BT sample is served directly and is not in the
+        # datasets-server parquet listing.
+        return [
+            "https://huggingface.co/datasets/HuggingFaceFW/fineweb/resolve/"
+            f"main/sample/10BT/{i:03d}_00000.parquet"
+            for i in range(4)
+        ]
+
+    ds, configs = SOURCES[composition]
+    out = []
+    for cfg in configs:
+        url = f"https://huggingface.co/api/datasets/{ds}/parquet"
+        if cfg:
+            url += f"/{cfg}"
+        with urllib.request.urlopen(url) as r:
+            d = json.load(r)
+        splits = d if cfg else next(iter(d.values()))
+        files = splits.get("train") or next(iter(splits.values()))
+        out.extend(files[:per_config])
+    return out
+
+
+def _download_parquet(url, dest):
+    """Download and verify. A silent curl will write an error page happily."""
+    import os
+
+    if os.path.exists(dest) and _is_parquet(dest):
+        return True
+    _sh(f"curl -sL -o {dest} '{url}'")
+    if _is_parquet(dest):
+        return True
+    print(f"  SKIP: {url} did not return a parquet file", flush=True)
+    if os.path.exists(dest):
+        os.remove(dest)
+    return False
+
+
+def _is_parquet(path):
+    import os
+
+    try:
+        if os.path.getsize(path) < 1024:
+            return False
+        with open(path, "rb") as f:
+            if f.read(4) != b"PAR1":
+                return False
+            f.seek(-4, os.SEEK_END)
+            return f.read(4) == b"PAR1"
+    except OSError:
+        return False
 
 
 def _build_corpora(composition, sizes, heldout_mb):
@@ -94,7 +141,7 @@ def _build_corpora(composition, sizes, heldout_mb):
 
     import pyarrow.parquet as pq
 
-    urls = SOURCES[composition]
+    urls = _resolve_urls(composition)
     root = f"{DATA}/{composition}"
     os.makedirs(f"{root}/parquet", exist_ok=True)
 
@@ -115,8 +162,8 @@ def _build_corpora(composition, sizes, heldout_mb):
     local = []
     for i, url in enumerate(urls):
         f = f"{root}/parquet/{i:03d}.parquet"
-        if not os.path.exists(f):
-            _sh(f"curl -sL -o {f} '{url}'", check=True)
+        if not _download_parquet(url, f):
+            continue
         local.append(f)
         got = sum(os.path.getsize(x) for x in local)
         # Parquet is compressed ~2-3x, so stop once there is comfortably
@@ -138,6 +185,11 @@ def _build_corpora(composition, sizes, heldout_mb):
     # Round-robin across source files so every prefix is balanced across
     # languages (and across repos, for code) rather than being the first file
     # followed by the second.
+    if len(local) < 2:
+        raise RuntimeError(
+            f"{composition}: only {len(local)} usable parquet files; "
+            "cannot build a corpus and hold one back for evaluation"
+        )
     streams = [docs_of(f) for f in local[:-1]]
     handles = {s: open(paths[s], "w") for s in targets}
     done = {s: False for s in targets}
