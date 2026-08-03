@@ -258,6 +258,189 @@ def _build_corpora(composition, sizes, heldout_mb):
 
 
 @app.function(volumes={DATA: volume}, timeout=24 * 3600, cpu=32, memory=131072)
+def analyse(vocabs, size_mb=1000, heldout_mb=20):
+    """Three questions the size sweep leaves on the table.
+
+    1. Cross-domain cost: what does using the wrong domain's tokenizer
+       actually cost? Everyone assumes it is bad; few numbers exist.
+    2. Rank-stratified overlap: the size sweep shows vocabularies differ
+       while performing identically. If the head is stable and only the tail
+       moves, that explains it — and is testable by comparing the top-N
+       tokens by merge rank rather than the whole set.
+    3. Per-language fertility inside the multilingual tokenizer, and whether
+       more data makes the split between languages more or less even. This is
+       the token-equity question, and it has a real cost attached.
+    """
+    import json
+    import os
+    import statistics
+
+    os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
+    _sh("cd /repo && maturin build --release --features python "
+        "--manifest-path gigatrain/Cargo.toml", check=True)
+    _sh("pip install --force-reinstall --find-links "
+        "/repo/gigatrain/target/wheels gigatrain", check=True)
+
+    import gigatrain
+    from tokenizers import Tokenizer
+
+    comps = ["english", "code", "multilingual"]
+    corpora, heldouts = {}, {}
+    for c in comps:
+        paths, held = _build_corpora(c, [size_mb], heldout_mb)
+        corpora[c], heldouts[c] = paths[size_mb], held
+
+    # Train one tokenizer per (composition, vocab) at a fixed corpus size.
+    models = {}
+    for c in comps:
+        for v in vocabs:
+            out = f"{DATA}/models/{c}_{size_mb}_{v}.json"
+            os.makedirs(f"{DATA}/models", exist_ok=True)
+            if not os.path.exists(out):
+                gigatrain.train_tokenizer(
+                    [corpora[c]], v, out, pretokenizer="bytelevel",
+                    special_tokens=["<|endoftext|>"],
+                )
+            models[(c, v)] = out
+    volume.commit()
+
+    held_text = {c: open(heldouts[c], encoding="utf-8", errors="ignore").read()
+                 for c in comps}
+
+    # --- 1. cross-domain -------------------------------------------------
+    cross = []
+    for v in vocabs:
+        for train_c in comps:
+            tok = Tokenizer.from_file(models[(train_c, v)])
+            for eval_c in comps:
+                text = held_text[eval_c]
+                ids = tok.encode(text).ids
+                cross.append({
+                    "vocab": v, "trained_on": train_c, "evaluated_on": eval_c,
+                    "bytes_per_token": round(len(text.encode()) / len(ids), 3),
+                })
+
+    # --- 2. rank-stratified overlap --------------------------------------
+    # Compare each composition's vocabulary against every other, restricted
+    # to the first N tokens by id (ids are assigned in merge order, so this
+    # is "the N most-important tokens").
+    strata = []
+    for v in vocabs:
+        vocabs_by_c = {}
+        for c in comps:
+            d = json.load(open(models[(c, v)]))["model"]["vocab"]
+            # id -> token, so we can take prefixes by rank
+            by_id = sorted(d.items(), key=lambda kv: kv[1])
+            vocabs_by_c[c] = [t for t, _ in by_id]
+        for n in [256, 1000, 4000, 16000, 64000, v]:
+            if n > v:
+                continue
+            for i, a in enumerate(comps):
+                for b in comps[i + 1:]:
+                    sa, sb = set(vocabs_by_c[a][:n]), set(vocabs_by_c[b][:n])
+                    strata.append({
+                        "vocab": v, "top_n": n, "pair": f"{a}|{b}",
+                        "overlap": round(len(sa & sb) / n, 4),
+                    })
+
+    # --- 3. per-language fertility ---------------------------------------
+    # Re-derive the per-language held-out sets from the multilingual sources.
+    per_lang = []
+    lang_files = {}
+    root = f"{DATA}/multilingual/parquet"
+    import pyarrow.parquet as pq
+
+    urls = _resolve_urls("multilingual")
+    n_per = max(1, len(urls) // len(LANGS))
+    for li, lang in enumerate(LANGS):
+        # _resolve_urls emits shards grouped per language, in LANGS order.
+        idx = li * n_per
+        f = f"{root}/{idx:03d}.parquet"
+        if not os.path.exists(f):
+            continue
+        parts, nb = [], 0
+        for batch in pq.ParquetFile(f).iter_batches(columns=["text"], batch_size=256):
+            for t in batch.column("text").to_pylist():
+                if t:
+                    parts.append(t)
+                    nb += len(t.encode())
+            if nb >= 2_000_000:
+                break
+        lang_files[lang] = "\n\n".join(parts)
+
+    for v in vocabs:
+        tok = Tokenizer.from_file(models[("multilingual", v)])
+        chars, byts = {}, {}
+        for lang, text in lang_files.items():
+            n = len(tok.encode(text).ids)
+            # Characters per token is the fair cross-script measure. Bytes per
+            # token is confounded by UTF-8 width: Latin is ~1.4 bytes/char
+            # while Devanagari and Japanese are ~3.0, so a byte-based figure
+            # flatters non-Latin scripts by a factor of two for reasons that
+            # have nothing to do with the tokenizer.
+            chars[lang] = len(text) / n
+            byts[lang] = len(text.encode()) / n
+        if chars:
+            per_lang.append({
+                "vocab": v,
+                "chars_per_token": {k: round(x, 3) for k, x in chars.items()},
+                "bytes_per_token": {k: round(x, 3) for k, x in byts.items()},
+                "chars_worst_over_best": round(max(chars.values()) / min(chars.values()), 3),
+                "chars_stdev": round(statistics.pstdev(chars.values()), 3),
+            })
+
+    out = {"cross_domain": cross, "rank_strata": strata, "per_language": per_lang}
+    print("\n=== ANALYSIS JSON")
+    print(json.dumps(out, indent=2), flush=True)
+    return out
+
+
+@app.local_entrypoint()
+def deeper(vocabs: str = "8000,32000", size_mb: int = 1000):
+    """Cross-domain, rank-stratified overlap, and per-language equity."""
+    import json as _json
+
+    vs = [int(x) for x in vocabs.split(",")]
+    out = analyse.remote(vs, size_mb)
+    print("RAW:", _json.dumps(out))
+
+    print("\n=== 1. CROSS-DOMAIN (bytes/token; higher = better compression)")
+    for v in vs:
+        print(f"\nvocab {v}:")
+        print(f"  {'trained on':>14} | " + " ".join(f"{c:>13}" for c in
+              ["english", "code", "multilingual"]))
+        for tc in ["english", "code", "multilingual"]:
+            row = [next(r["bytes_per_token"] for r in out["cross_domain"]
+                        if r["vocab"] == v and r["trained_on"] == tc
+                        and r["evaluated_on"] == ec)
+                   for ec in ["english", "code", "multilingual"]]
+            print(f"  {tc:>14} | " + " ".join(f"{x:>13.3f}" for x in row))
+
+    print("\n=== 2. RANK-STRATIFIED VOCABULARY OVERLAP")
+    for v in vs:
+        print(f"\nvocab {v}:")
+        pairs = sorted({r["pair"] for r in out["rank_strata"]})
+        ns = sorted({r["top_n"] for r in out["rank_strata"] if r["vocab"] == v})
+        print(f"  {'pair':>26} | " + " ".join(f"{n:>7}" for n in ns))
+        for p in pairs:
+            row = []
+            for n in ns:
+                m = [r["overlap"] for r in out["rank_strata"]
+                     if r["vocab"] == v and r["pair"] == p and r["top_n"] == n]
+                row.append(m[0] if m else float("nan"))
+            print(f"  {p:>26} | " + " ".join(f"{x:>7.3f}" for x in row))
+
+    print("\n=== 3. PER-LANGUAGE EQUITY (multilingual tokenizer)")
+    print("    chars/token is the fair measure; bytes/token shown for contrast")
+    for r in out["per_language"]:
+        print(f"\nvocab {r['vocab']}  worst/best (chars) = "
+              f"{r['chars_worst_over_best']}")
+        for lang, cpt in sorted(r["chars_per_token"].items(), key=lambda kv: -kv[1]):
+            print(f"  {lang:>10} {cpt:>7.3f} chars/token "
+                  f"({r['bytes_per_token'][lang]:>6.3f} bytes/token)")
+
+
+@app.function(volumes={DATA: volume}, timeout=24 * 3600, cpu=32, memory=131072)
 def sweep(sizes, vocabs, heldout_mb=20, composition="english"):
     import json
     import os

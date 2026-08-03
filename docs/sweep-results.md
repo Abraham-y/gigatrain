@@ -118,3 +118,105 @@ Recorded because each would have produced a plausible-looking wrong answer:
    all three vocabulary sizes. That was reported as a flat multilingual curve
    before the tell — `trained size=3000MB in 0.0s` — was noticed. Corpora are
    now size-validated and a short corpus raises instead of warning.
+
+---
+
+# Follow-up analyses
+
+Three questions the size sweep left open, answered with the same tokenizers
+(`modal run scripts/modal_sweep.py::deeper`). All at a 1 GB corpus.
+
+## 1. What does using the wrong domain's tokenizer cost?
+
+bytes/token, higher is better compression. Rows are what the tokenizer was
+trained on, columns what it was evaluated on.
+
+**vocab 32000**
+
+| trained on | english | code | multilingual |
+|---|---|---|---|
+| english | **4.401** | 1.975 | 1.342 |
+| code | 3.664 | **3.390** | 2.123 |
+| multilingual | 2.667 | 1.671 | **4.565** |
+
+Cost of the mismatch, against the native tokenizer:
+
+| text | wrong tokenizer | penalty |
+|---|---|---|
+| english | code | 16.7% |
+| english | multilingual | 39.4% |
+| code | english | 41.7% |
+| code | multilingual | 50.7% |
+| multilingual | english | **70.6%** |
+| multilingual | code | 53.5% |
+
+Two things stand out. **The penalty is asymmetric**: a code tokenizer on
+English text costs 16.7%, but an English tokenizer on code costs 41.7%. Code
+corpora contain a great deal of English — comments, identifiers, docstrings —
+so a code tokenizer partly subsumes an English one, and not the reverse.
+
+**Multilingual text is the most punished**, at 70.6% worse under an English
+tokenizer. That is the concrete cost of applying an English-trained
+vocabulary to non-English text, and it is far larger than any effect corpus
+size produced.
+
+## 2. Where in the vocabulary does the divergence live?
+
+Overlap of the top-N tokens by merge rank, across domain pairs.
+
+| pair | top 256 | top 1000 | top 4000 | top 16000 | full 32k |
+|---|---|---|---|---|---|
+| english \| code | 0.836 | 0.508 | 0.384 | 0.361 | 0.359 |
+| english \| multilingual | 0.793 | 0.260 | 0.130 | 0.090 | 0.088 |
+| code \| multilingual | 0.797 | 0.258 | 0.128 | 0.093 | 0.094 |
+
+**The head is largely shared and the tail is almost entirely domain-specific.**
+About 80% of the first 256 tokens are common to any pair of domains; by 4000
+tokens that is 13% for anything involving multilingual. English and code
+retain 36% agreement all the way out, again because code contains English.
+
+This is the mechanism behind the size-sweep result. The tokens that carry
+most of the traffic are forced by the data and appear everywhere; the tail is
+where vocabularies differ, and the tail contributes little to fertility.
+
+**Incidental confirmation:** the top-N rows are identical between the vocab
+8000 and vocab 32000 runs. Greedy BPE is prefix-stable — training to 8k
+produces the first 8k tokens of the 32k vocabulary on the same corpus — so
+vocabularies are nested across target sizes.
+
+## 3. Per-language equity in the multilingual tokenizer
+
+Characters per token, which is the fair cross-script measure.
+
+| language | vocab 8k | vocab 32k |
+|---|---|---|
+| Arabic | 2.718 | 3.434 |
+| German | 2.263 | 2.976 |
+| Japanese | 1.237 | 1.676 |
+| Russian | 1.504 | 1.560 |
+| Hindi | 1.493 | 1.544 |
+| **worst/best ratio** | **2.20** | **2.22** |
+
+A speaker of the worst-served language needs **2.2x as many tokens** for the
+same amount of text as the best-served one, and quadrupling the vocabulary
+does not narrow that gap at all (2.20 → 2.22). Japanese, Russian and Hindi
+all sit near 1.5 characters per token while Arabic and German are 2.3–3.4.
+
+**Methodological note, recorded because the first version of this analysis was
+wrong.** It originally reported bytes per token, which made Arabic look
+*best-served* (4.811) and German *worst* (2.299) — the exact opposite of the
+character-based ranking. Bytes per token is confounded by UTF-8 width: Latin
+text is ~1.4 bytes/char, Cyrillic and Arabic ~2.0, Devanagari and Japanese
+~3.0. A byte-based equity figure flatters non-Latin scripts by roughly the
+ratio of their encoding width, for reasons that have nothing to do with the
+tokenizer. Any equity claim measured in bytes should be treated as suspect.
+
+## What these add to the picture
+
+Corpus size changes the vocabulary but not measured quality. **Domain and
+language change measured quality a great deal** — 17–71% in compression, and
+a 2.2x equity gap between languages that more vocabulary does not fix.
+
+So the practically important lever is *what* you train on, not *how much*.
+That is a cleaner and more useful message than the original motivation, and
+it is supported by every arm of this sweep.
