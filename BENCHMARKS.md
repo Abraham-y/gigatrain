@@ -234,12 +234,21 @@ is the point: #1681 is about OOM, so a 192 GiB machine would not answer it.
 |---|---|---|---|---|
 | **gigatrain** | ByteLevel | **47.3 s** | **2.9 GB** | ok |
 | **gigatrain** | whitespace | **137.4 s** | 7.2 GB | ok |
+| SentencePiece v0.2.2 | its own | 158.3 s | 27.2 GB | **SIGSEGV** |
 | HuggingFace 0.22.2 | whitespace | 730.9 s | 36.3 GB | ok |
+| rustbpe | GPT-4 regex | 1216.7 s | 5.8 GB | ok |
 
 **Like-for-like is whitespace vs whitespace: 137.4 s against 730.9 s (5.3x),
 on 7.2 GB against 36.3 GB (5.0x).** That 5.3x sits alongside the 5.8x measured
 at 12.9 GB on 64 cores, so the advantage is stable across both scale and core
 count.
+
+SentencePiece segfaulted again at 158 s and 27.2 GB resident, reproducing its
+12.9 GB behaviour on a different machine, core count and corpus size — so that
+crash is a property of the input scale rather than a one-off. rustbpe finished
+but took 20 minutes, and is again the memory winner among the baselines at
+5.8 GB — less than gigatrain's whitespace mode, more than twice its ByteLevel
+mode.
 
 The memory line is the one that answers #1681. HuggingFace needed **36.3 GB of
 RAM for 19.4 GB of text — 1.9x the corpus** — which is why a 20 GB corpus OOMs

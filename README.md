@@ -70,7 +70,8 @@ own pretokenizers, so none of these is a like-for-like parity comparison.)
 **19.4 GB on 16 cores / 64 GiB** — a deliberately modest box, because
 [#1681](https://github.com/huggingface/tokenizers/issues/1681) is about OOM at
 this corpus size: gigatrain 47.3 s / **2.9 GB** (ByteLevel) and 137.4 s /
-7.2 GB (whitespace), against HuggingFace 730.9 s / **36.3 GB** (whitespace).
+7.2 GB (whitespace), against HuggingFace 730.9 s / **36.3 GB** (whitespace),
+rustbpe 1216.7 s / 5.8 GB, and SentencePiece **SIGSEGV** at 158 s / 27.2 GB.
 Like-for-like that is 5.3x faster on 5.0x less memory. HF needing 1.9x the
 corpus size in RAM is the mechanism behind #1681; gigatrain needs 0.15x.
 gigatoken (18.8 s) and ffbpe (65.4 s) were measured on the 10-core laptop
