@@ -46,10 +46,15 @@ How much of the big-corpus vocabulary a smaller corpus recovers.
 ## Findings
 
 **1. Vocabulary identity depends strongly on corpus size; measured quality
-barely does.** Across every composition and vocabulary size, a 100 MB corpus
-gives a vocabulary that is 6–37% different from the large-corpus one, while
-fertility moves by at most 1.3%. The effect is monotone in vocabulary size:
-larger vocabularies have longer tails and the tail needs data.
+does not measurably.** Across every composition and vocabulary size, a 100 MB
+corpus gives a vocabulary that is 6–37% different from the large-corpus one.
+Fertility moves by at most 1.3% — and the seed repeats below put the noise
+floor at roughly ±0.7% for code and multilingual, so most of those
+differences are **at or below what resampling produces**. The conclusion is
+therefore stronger than "the effect is small": for fertility, no effect is
+resolvable at this sample size. The vocabulary-overlap effect is real and is
+monotone in vocabulary size — larger vocabularies have longer tails, and
+tails need data.
 
 **2. Domain changes how hard the tail is to fill.** At 128k vocab and 100 MB,
 recovery is 0.811 (English), 0.786 (multilingual), 0.626 (code). Code is the
@@ -64,12 +69,26 @@ whitespace boundaries, so bytes/token is the fairer cross-domain measure:
 English 4.39, code 3.39, multilingual 4.58. Code is the least compressible
 per byte despite its smaller alphabet.
 
-**4. Multilingual is the flattest arm, which was not the prediction.** Its
-overlap curve is nearly level from 100 MB to 1 GB (0.881 → 0.885 at 8k), and
-it is the only composition where a *smaller* corpus sometimes scores higher
-(0.881 at 100 MB vs 0.870 at 300 MB). With five languages splitting one
-budget, which language wins the tail appears to be closer to arbitrary than
-to data-limited.
+**4. Multilingual vocabularies are far less stable across samples.** Three
+independent samples per cell (vocab 32k, `modal run ...::seeds`), reported as
+mean ± half-range:
+
+| composition | overlap at 100 MB | fertility at 100 MB |
+|---|---|---|
+| english | 0.930 ± 0.001 | 1.361 ± 0.000 |
+| code | 0.833 ± 0.002 | 3.525 ± 0.023 |
+| multilingual | **0.857 ± 0.029** | 15.698 ± 0.110 |
+
+Multilingual overlap varies **15–30x more between samples** than English or
+code. With five languages splitting one budget, which language wins the tail
+really is close to arbitrary — but the right way to say that is as variance,
+not as a curve shape.
+
+**Retraction.** An earlier version of this document reported that
+multilingual overlap was non-monotone (0.881 at 100 MB against 0.870 at
+300 MB) and read meaning into it. That difference is 0.011, well inside the
+±0.029 sample spread. It was noise, and the interpretation built on it is
+withdrawn.
 
 ## What this means
 
@@ -92,7 +111,9 @@ measures alone.
 
 ## Caveats
 
-- One held-out set and one seed per cell. No error bars.
+- The main grid is one seed per cell. Three-seed repeats were run at vocab
+  32k for 100 MB and 300 MB only (finding 4); everything else is a point
+  estimate and fine structure in it should not be read.
 - Nested corpora, so samples are not independent (correct for a size sweep,
   but it means these are not 36 independent draws).
 - English reference is 10 GB; code and multilingual are 3 GB, so the

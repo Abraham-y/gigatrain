@@ -213,7 +213,7 @@ def _build_corpora(composition, sizes, heldout_mb, seed=0):
     # same one. Corpora within a seed stay nested.
     if seed:
         for st in streams:
-            for _ in range(seed * 5000):
+            for _ in range(seed * 1500):
                 try:
                     next(st)
                 except StopIteration:
