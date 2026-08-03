@@ -247,35 +247,21 @@ landed, phase 1 — not the merge loop — became ~83% of runtime.
 
 ## What it was used for
 
-The trainer made a study affordable that previously was not: 36 tokenizers
-across three corpus compositions, four corpus sizes and three vocabulary
-sizes, in minutes rather than days. Full results in
+The trainer made a large tokenizer-design sweep affordable — 36 vocabularies
+across three corpus compositions in minutes rather than days.
+
+**The first round of results has been retracted.** An adversarial audit found
+the experimental setup was broken in several independent ways: the
+multilingual held-out set turned out to be a single language, the
+per-language equity numbers were measured in-sample, the corpora were not
+language-balanced, and the "shared head" metric was measuring the UTF-8 byte
+alphabet rather than learned merges. Details, in full, in
 [docs/sweep-results.md](docs/sweep-results.md).
 
-**Corpus size changes the vocabulary but not measured quality.** Going from
-100 MB to 10 GB leaves fertility within 1.3% in every domain tested, while
-changing 6–37% of the tokens. Larger vocabularies diverge more, because the
-tail needs data — at 128k vocab on code, a 100 MB corpus recovers only 62.6%
-of the 3 GB vocabulary.
-
-**Composition matters enormously.** Using the wrong domain's tokenizer costs
-17–71% of compression, and the penalty is asymmetric: a code tokenizer on
-English text costs 16.7%, but an English tokenizer on code costs 41.7%.
-Multilingual text under an English tokenizer is the worst case, at 70.6%.
-
-**The head is universal, the tail is domain-specific.** About 80% of the
-first 256 tokens are shared between any two domains; by 4000 tokens that
-falls to 13%. This is why vocabularies can differ so much while performing
-identically — the tokens carrying the traffic are forced by the data.
-
-**Token equity does not improve with vocabulary size.** In a five-language
-vocabulary, the worst-served language needs 2.2x as many tokens per character
-as the best-served, and quadrupling the vocabulary from 8k to 32k moves that
-ratio from 2.20 to 2.22.
-
-So the lever is *what* you train on, not *how much* — which is close to the
-opposite of this project's original motivation, and is stated that way in
-[CLAUDE.md](CLAUDE.md).
+What survives is only the coarse shape, for English and code: vocabulary
+overlap falls with smaller corpora and falls faster for larger vocabularies,
+while fertility moves very little. The experiment is being rebuilt before any
+number from it is quoted.
 
 ## Prior art
 

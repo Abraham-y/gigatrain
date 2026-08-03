@@ -1,3 +1,79 @@
+# RETRACTED — do not cite
+
+An adversarial audit on 2026-08-03 found that most of the results below rest
+on broken experimental setup. **The measurements are not trustworthy and the
+conclusions drawn from them are withdrawn.** The document is kept, in full,
+because the failures are more instructive than the findings were.
+
+## What was wrong
+
+1. **The multilingual held-out set was pure Japanese, not five languages.**
+   `_resolve_urls` returns shards grouped by language, so `local[-1]` — the
+   shard reserved for evaluation — was the last Japanese shard. Every
+   multilingual fertility figure is Japanese-only (15.56 reported against
+   ~3.22 for a genuinely balanced mix). This invalidates the entire
+   multilingual row and column of the cross-domain table, **including the
+   headline "multilingual text is 70.6% worse under an English tokenizer"** —
+   that is Japanese text, the hardest and least-represented language.
+
+2. **The per-language equity numbers were measured entirely in-sample.** The
+   per-language evaluation text is the first ~2 MB of each language's first
+   shard, and those shards are all inside the training corpus. The "2.2x
+   worst/best ratio" and "quadrupling the vocabulary does not close it" are
+   train-on-test results.
+
+3. **The multilingual corpus was never language-balanced.** Round-robin took
+   one *document* per stream, but mean document size varies 2.7x across these
+   languages: Russian holds 32.4% of the characters and Japanese 8.9%. An
+   equity claim cannot be made from a corpus whose languages differ 3.6x in
+   representation — and Japanese scoring worst is exactly what
+   under-representation predicts.
+
+4. **The English 10 GB reference is not reproducible and was contaminated.**
+   The current code cannot build it (it yields ~6.5 GB and raises). The
+   published numbers came from an earlier commit whose 10 GB corpus spilled
+   into the shard used for held-out text, so 100% of the English evaluation
+   text was inside its training corpus. The bias is small but runs in the
+   direction that makes "size does not matter" look stronger.
+
+5. **The seed repeats were not independent samples.** Seeds skip N documents
+   *per stream*, and stream count varies by composition: English had one
+   stream, so its three "samples" share 91–95% of documents, while
+   multilingual had 39 streams and shares none. So "multilingual varies
+   15–30x more between samples" measures the shard layout of `_resolve_urls`,
+   not linguistic instability, and the ±0.001 English figures are near-zero
+   by construction. The "noise floor" derived from this is meaningless.
+
+6. **Rank-stratified overlap measured the byte alphabet, not merge rank.**
+   Token ids run: special tokens, then the alphabet sorted by codepoint, then
+   merges. The first merge lands around id 168–188, so the published "top
+   256" window is almost entirely the UTF-8 byte alphabet. Its ~80% overlap
+   is "which byte values appear in each corpus"; of the few merges inside the
+   window, 2–4 are shared. The claim that the head is shared and the tail is
+   domain-specific **is not demonstrated by this metric at all.**
+
+7. **Cross-domain penalties are understated.** `unk_token` is null and the
+   alphabet is corpus-derived, so a mismatched tokenizer silently drops
+   out-of-alphabet bytes — measured at 22.3% of the stream in one case —
+   while `bytes_per_token` still divides by the full byte count.
+
+## What survives
+
+Only the coarsest shape, and only for English and code: **vocabulary overlap
+falls with smaller corpora and falls faster for larger vocabularies, while
+fertility moves very little.** The direction is probably right. The specific
+numbers should not be quoted, and nothing about multilingual should be
+quoted at all.
+
+## Status
+
+The experiment needs rebuilding before any of this is publishable: a held-out
+set sampled across all languages, character-balanced multilingual corpora,
+genuinely independent seeds, an out-of-sample equity measure, a rank metric
+that starts after the alphabet, and a reproducible English reference.
+
+---
+
 # Intrinsic sweep: does more training data change the tokenizer?
 
 Run 2026-08-02 with `modal run scripts/modal_sweep.py`. Nested corpora (each
