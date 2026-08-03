@@ -33,6 +33,10 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --manifest-path gigatrain/Cargo.toml -- --check
       - run: cargo clippy --manifest-path gigatrain/Cargo.toml --all-targets -- -D warnings
+      # `python` is off by default, so the bindings — the code that ships to
+      # PyPI — were never linted here even though release.yml builds them.
+      # A clippy error sat in python.rs undetected because of this gap.
+      - run: cargo clippy --manifest-path gigatrain/Cargo.toml --features python --all-targets -- -D warnings
 
   # The milestone-2 gate: byte-exact merge-list parity with HuggingFace
   # tokenizers across corpus configurations, plus fuzzing and a check that

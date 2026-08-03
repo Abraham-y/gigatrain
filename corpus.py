@@ -2,7 +2,7 @@
 boilerplate-to-content ratio, long-tailed document lengths, and near-duplicates.
 Deterministic so all benchmarks see identical bytes.
 """
-import random, string, math
+import random, string
 
 random.seed(1337)
 

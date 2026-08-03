@@ -76,20 +76,25 @@ def gigatrain_train(files, args):
         vocab_path = f.name
     cmd += ["--vocab-out", vocab_path]
     cmd += files
-    t0 = time.perf_counter()
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    elapsed = time.perf_counter() - t0
-    print(f"  gigatrain stats: {proc.stderr.strip()}", file=sys.stderr)
-    merges = []
-    for line in proc.stdout.splitlines():
-        a, sep, b = line.partition(" ")
-        assert sep, f"bad merge line: {line!r}"
-        merges.append((a, b))
+    # The temp file must be removed even when the trainer exits non-zero, which
+    # is exactly what the fuzzers do thousands of times per run.
     try:
+        t0 = time.perf_counter()
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        elapsed = time.perf_counter() - t0
+        print(f"  gigatrain stats: {proc.stderr.strip()}", file=sys.stderr)
+        merges = []
+        for line in proc.stdout.splitlines():
+            a, sep, b = line.partition(" ")
+            assert sep, f"bad merge line: {line!r}"
+            merges.append((a, b))
         with open(vocab_path, encoding="utf-8") as fh:
             vocab = json.load(fh)
     finally:
-        os.unlink(vocab_path)
+        try:
+            os.unlink(vocab_path)
+        except FileNotFoundError:
+            pass
     return merges, vocab, elapsed
 
 

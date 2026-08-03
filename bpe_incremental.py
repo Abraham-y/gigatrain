@@ -1,17 +1,29 @@
-"""Naive vs incremental BPE training.
+"""Naive vs incremental BPE training — the reference implementation ported to
+Rust in milestone 1. Kept per CLAUDE.md ("port it, do not reinvent it").
 
-Naive (what HF's BpeTrainer effectively costs at scale): recount all pairs over
-all words every merge -> O(corpus_pretokens * vocab_size).
+Naive: recount all pairs over all words every merge
+-> O(corpus_pretokens * vocab_size).
 
 Incremental: maintain pair->count plus an inverted index pair->{word ids}, and on
 each merge only touch the words that actually contain the merged pair, applying
 delta updates to neighbouring pair counts. -> O(affected words) per merge.
+
+**The naive side is a strawman and its speedup must not be quoted.** An earlier
+version of this docstring called it "what HF's BpeTrainer effectively costs at
+scale". That is false: HuggingFace, SentencePiece and rustbpe all implement the
+incremental algorithm already, with an inverted index and a lazy heap. See the
+correction in CLAUDE.md and PRIOR_ART.md section 2. This file is useful for
+understanding the algorithm, not for benchmarking against anything.
 """
-import time, re, collections, heapq, os, pickle, sys
+import time, re, collections, heapq, os
+
+import corpus
 
 TARGET = int(os.environ.get("MB", "4")) * 1_000_000
-CACHE = f"/home/claude/corpus_{TARGET}.pkl"
-htmls, texts = pickle.load(open(CACHE, "rb"))
+# Was a pickle at a hardcoded /home/claude path, so this could not run anywhere
+# but the machine it was written on. corpus.py is the same generator the parity
+# gate uses.
+_, texts = corpus.make_corpus(TARGET)
 DOCS = [t for t in texts if len(t) > 200]
 
 freq = collections.Counter()

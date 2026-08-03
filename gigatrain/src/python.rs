@@ -51,6 +51,10 @@ fn parse_pretokenizer(name: &str) -> PyResult<bool> {
     }
 }
 
+/// What `train_bpe` hands back to Python: the vocabulary as a `{token: id}`
+/// dict, and the ordered merge list as `(left, right)` pairs.
+type VocabAndMerges = (Py<PyDict>, Vec<(String, String)>);
+
 /// Train on `files`, returning `(vocab, merges)`.
 ///
 /// `vocab` maps token string to id; `merges` is the ordered list of
@@ -82,7 +86,7 @@ fn train_bpe(
     threads: Option<usize>,
     continuing_subword_prefix: Option<String>,
     end_of_word_suffix: Option<String>,
-) -> PyResult<(Py<PyDict>, Vec<(String, String)>)> {
+) -> PyResult<VocabAndMerges> {
     let bytelevel = parse_pretokenizer(&pretokenizer)?;
     let config = build_config(
         vocab_size,

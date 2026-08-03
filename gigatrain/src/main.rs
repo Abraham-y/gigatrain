@@ -22,9 +22,13 @@
 //! equivalent to HF's WhitespaceSplit. Files are read in chunks sized from
 //! the input and counted across threads. Chunks are cut at token boundaries,
 //! so a stretch of input containing none — no whitespace at all, or no
-//! newline under --pretokenizer bytelevel — is buffered whole; memory is
-//! therefore bounded by the longest boundary-free run, not by a fixed chunk
-//! size.
+//! newline under --pretokenizer bytelevel — is buffered whole.
+//!
+//! The cost of that is mostly *time*, not memory: the buffer grows to the
+//! longest boundary-free run (measured at 1.1x the file on a 2 GB one-liner),
+//! but every reader range except the first finds no boundary and retires, so
+//! phase 1 collapses to a single thread. Measured 16.7x slower than the same
+//! bytes with newlines. See docs/degenerate-results.md.
 
 use gigatrain::{train, TrainerConfig, WordCounter, WordTable};
 use std::io::Write;
@@ -112,7 +116,10 @@ fn main() {
     // token, so a space there corrupts the whole merge list rather than one
     // line. The Python API returns pairs directly and is unaffected.
     for (flag, value) in [
-        ("--continuing-subword-prefix", &config.continuing_subword_prefix),
+        (
+            "--continuing-subword-prefix",
+            &config.continuing_subword_prefix,
+        ),
         ("--end-of-word-suffix", &config.end_of_word_suffix),
     ] {
         if let Some(v) = value {
