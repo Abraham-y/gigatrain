@@ -18,6 +18,15 @@ HuggingFace's `BpeTrainer` is effectively unusable past a few GB:
 - Issue #1681: 20 GB corpus OOMs during the merge phase on 1.5 TB and 2 TB
   machines.
 
+**Correction.** Both issues are closed (#1313 as stale in 2023; #1681 on a
+workaround commenters showed does not apply to training). #1313 used
+`vocab_size=512` on unsegmented data, so its merge loop was nearly free and
+this project does **not** reproduce it — the cause was degenerate
+pretokenization. The live memory issues are #1795 and #1824. Separately,
+measurement here found HF's trainer gets ~19x *slower* going from 10 to 64
+cores, which is a plausible contributing factor in #1313 and is a finding in
+its own right.
+
 Everything published in response is hobbyist-scale: blog posts reporting 2000x
 on a 114 MB Gutenberg corpus and 230x on TinyStories, plus a header-only C++
 trainer that takes 1-2 hours for a 50k vocab. No production-grade tool exists.
@@ -33,7 +42,32 @@ Secondary motivation: this unblocks research. Nobody studies vocabulary design
 empirically at scale because you can't afford to train twenty vocabularies on a
 terabyte. Make it cheap and that becomes tractable.
 
-## The core algorithmic insight
+**Correction, after doing exactly that (docs/sweep-results.md).** The premise
+holds — the sweeps took minutes where they would have taken days — but the
+result argues against the framing. Across English, code and multilingual
+corpora, going from 100 MB to 10 GB changes fertility by at most 1.3%.
+Sampling a corpus down costs almost nothing measurable.
+
+What *does* matter is composition, not size: using an English tokenizer on
+multilingual text costs 70.6% of compression, and the worst-served language
+in a five-language vocabulary needs 2.2x as many tokens as the best-served,
+a gap that quadrupling the vocabulary does not close.
+
+So the honest pitch is "training is now fast and exact", not "you were losing
+something by sampling down".
+
+## Status, 2026-08-03
+
+Milestones 1-6 are done and milestone 7 is half done (WordPiece). The trainer
+holds byte-exact HuggingFace parity, verified at 12.9 GB in both
+pretokenization modes, and is the fastest of five trainers measured. See
+README.md, BENCHMARKS.md and PRIOR_ART.md.
+
+**Three claims in this document have since been disproven by the project's
+own measurements. They are left in place with corrections rather than
+deleted, because the reasoning that produced them is still worth reading.**
+
+## The core algorithmic insight — SUPERSEDED
 
 Naive BPE training recounts every adjacent pair across the whole corpus on every
 merge. That is O(pretokens * vocab_size).
@@ -50,6 +84,16 @@ The fix is incremental maintenance:
   comparing against the live `pair_count`.
 
 This is O(affected occurrences) per merge instead of O(corpus).
+
+**Correction.** This is not an insight and not a differentiator: it is the
+standard algorithm. Sennrich et al. 2015 state it, Zouhar et al. 2023
+formalize it (arXiv:2306.16837), and `tokenizers`, SentencePiece and rustbpe
+all already implement it — HF's `word.rs` even has the arena-backed linked
+list listed below as future work. The naive baseline below is a strawman
+nobody ships, and quoting its speedup would be misleading.
+
+What actually produced the wins: the hash-sharded phase-1 pipeline, arena
+memory layout, and dropping word strings once tokenized. See ARCHITECTURE.md.
 
 Measured in pure Python, before any Rust, SIMD, or parallelism:
 

@@ -130,7 +130,7 @@ def _is_parquet(path):
         return False
 
 
-def _build_corpora(composition, sizes, heldout_mb):
+def _build_corpora(composition, sizes, heldout_mb, seed=0):
     """Download and slice, returning (corpus paths by size, held-out path).
 
     Slices are nested: the 100 MB corpus is a prefix of the 1 GB one, so size
@@ -147,7 +147,8 @@ def _build_corpora(composition, sizes, heldout_mb):
 
     targets = sorted(sizes)
     largest = targets[-1]
-    paths = {s: f"{root}/corpus_{s}mb.txt" for s in targets}
+    tag = "" if seed == 0 else f"_s{seed}"
+    paths = {s: f"{root}/corpus_{s}mb{tag}.txt" for s in targets}
     heldout = f"{root}/heldout_{heldout_mb}mb.txt"
 
     def usable(path, want_bytes):
@@ -207,6 +208,16 @@ def _build_corpora(composition, sizes, heldout_mb):
             "cannot build a corpus and hold one back for evaluation"
         )
     streams = [docs_of(f) for f in local[:-1]]
+    # Different seeds skip a different number of leading documents, so each
+    # seed is a genuinely different sample rather than a reshuffle of the
+    # same one. Corpora within a seed stay nested.
+    if seed:
+        for st in streams:
+            for _ in range(seed * 5000):
+                try:
+                    next(st)
+                except StopIteration:
+                    break
     handles = {s: open(paths[s], "w") for s in targets}
     done = {s: False for s in targets}
     written = 0
@@ -396,6 +407,43 @@ def analyse(vocabs, size_mb=1000, heldout_mb=20):
 
 
 @app.local_entrypoint()
+def seeds(sizes: str = "100,300,1000", vocabs: str = "32000",
+          compositions: str = "english,code,multilingual", n_seeds: int = 3):
+    """Repeat the sweep on independent samples to get spread, not point values."""
+    import json as _json
+    import statistics
+
+    size_list = [int(x) for x in sizes.split(",")]
+    vocab_list = [int(x) for x in vocabs.split(",")]
+    comps = compositions.split(",")
+
+    rows = []
+    for comp in comps:
+        for seed in range(n_seeds):
+            rows.extend(sweep.remote(size_list, vocab_list, 20, comp, seed))
+    print("RAW:", _json.dumps(rows))
+
+    print("\n=========== SEED SPREAD (mean +/- half-range over "
+          f"{n_seeds} samples) ===========")
+    for comp in comps:
+        for v in vocab_list:
+            print(f"\n{comp} / vocab {v}")
+            print(f"  {'corpus':>8} {'overlap':>18} {'fertility':>18}")
+            for s_ in size_list:
+                cells = [r for r in rows if r["composition"] == comp
+                         and r["vocab"] == v and r["size_mb"] == s_]
+                if not cells:
+                    continue
+                ov = [c["vocab_overlap"] for c in cells]
+                fe = [c["fertility"] for c in cells]
+                def fmt(xs):
+                    m = statistics.mean(xs)
+                    half = (max(xs) - min(xs)) / 2
+                    return f"{m:.3f} +/- {half:.3f}"
+                print(f"  {s_:>6}MB {fmt(ov):>18} {fmt(fe):>18}")
+
+
+@app.local_entrypoint()
 def deeper(vocabs: str = "8000,32000", size_mb: int = 1000):
     """Cross-domain, rank-stratified overlap, and per-language equity."""
     import json as _json
@@ -441,7 +489,7 @@ def deeper(vocabs: str = "8000,32000", size_mb: int = 1000):
 
 
 @app.function(volumes={DATA: volume}, timeout=24 * 3600, cpu=32, memory=131072)
-def sweep(sizes, vocabs, heldout_mb=20, composition="english"):
+def sweep(sizes, vocabs, heldout_mb=20, composition="english", seed=0):
     import json
     import os
     import time
@@ -457,7 +505,7 @@ def sweep(sizes, vocabs, heldout_mb=20, composition="english"):
 
     # --- corpora -------------------------------------------------------
     print(f"=== composition: {composition}", flush=True)
-    corpora, heldout = _build_corpora(composition, sizes, heldout_mb)
+    corpora, heldout = _build_corpora(composition, sizes, heldout_mb, seed)
     held_text = open(heldout, encoding="utf-8", errors="ignore").read()
     held_words = len(held_text.split())
     held_bytes = len(held_text.encode())
@@ -469,7 +517,7 @@ def sweep(sizes, vocabs, heldout_mb=20, composition="english"):
     timings = {}
     for v in vocabs:
         for s in sizes:
-            out = f"/tmp/tok_{s}_{v}.json"
+            out = f"/tmp/tok_{s}_{v}_s{seed}.json"
             t0 = time.perf_counter()
             gigatrain.train_tokenizer(
                 [corpora[s]], v, out,
@@ -501,7 +549,7 @@ def sweep(sizes, vocabs, heldout_mb=20, composition="english"):
             tok = Tokenizer.from_file(models[(s, v)])
             ids = tok.encode(held_text).ids
             rows.append({
-                "composition": composition, "size_mb": s, "vocab": v,
+                "composition": composition, "seed": seed, "size_mb": s, "vocab": v,
                 "vocab_overlap": round(overlap, 4),
                 "merge_prefix": prefix,
                 "merge_prefix_frac": round(prefix / max(len(ref_merges), 1), 4),
