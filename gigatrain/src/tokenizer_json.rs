@@ -34,6 +34,17 @@ fn quoted(s: &str, out: &mut String) {
     out.push('"');
 }
 
+/// Serialize `s` as a JSON string literal, surrounding quotes included.
+///
+/// Exposed so the CLI's `--vocab-out` uses exactly the escaping the
+/// `tokenizer.json` writer does, rather than a second implementation that
+/// could drift from it.
+pub fn json_string(s: &str) -> String {
+    let mut out = String::new();
+    quoted(s, &mut out);
+    out
+}
+
 /// Serialize `result` as a `tokenizer.json` document.
 ///
 /// `special_tokens` are emitted as added tokens so they survive a round trip,

@@ -62,8 +62,10 @@ faster still (43.8 s, 17.2x HF's time) but produces a different tokenizer, so
 quoting 17.2x as a speedup would break this repo's own rule that a speedup
 with different output is not a speedup.
 
-**1 GB on the same 64-core box:** gigatrain 7.4 s (ByteLevel) / 20.3 s
-(whitespace) · rustbpe 88.2 s · SentencePiece 112.7 s · HuggingFace 244.4 s.
+**1 GB on the same 64-core box:** gigatrain 7.4 s (ByteLevel) · rustbpe 88.2 s ·
+SentencePiece 112.7 s · HuggingFace 244.4 s. (gigatrain's whitespace mode was
+not measured at 1 GB on this box; the trainers it is listed against use their
+own pretokenizers, so none of these is a like-for-like parity comparison.)
 gigatoken (18.8 s) and ffbpe (65.4 s) were measured on the 10-core laptop
 instead, where gigatrain is 10.2 s — see [PRIOR_ART.md](PRIOR_ART.md) for
 those same-machine pairings.
@@ -76,14 +78,19 @@ per-thread hash maps, so more cores means more merging work, not less.
 
 This is plausibly a contributing factor in
 [#1313](https://github.com/huggingface/tokenizers/issues/1313) — 13 GB on
-256 threads, unfinished after 10 hours, closed as stale in 2023 without
-diagnosis. It is not a reproduction of that issue, which used `vocab_size=512`
-on unsegmented data; see the retraction in [BENCHMARKS.md](BENCHMARKS.md).
-The measurement here stands on its own: same binary, same corpus, same
-version, only the core count changed.
+256 threads, unfinished after 10 hours, closed as stale in 2023. It is not a
+reproduction of that issue, which used `vocab_size=512` on unsegmented data
+and was diagnosed in-thread by a maintainer as degenerate pretokenization; see
+the retraction in [BENCHMARKS.md](BENCHMARKS.md).
 
-gigatrain scales the other way: 14.5 s at 1 thread to 4.7 s at 48, flat
-thereafter.
+**Caveat: this is not a controlled core-count sweep.** The two machines differ
+in ISA, OS and allocator as well as core count, and no HF thread scan has been
+run on a single box. Core count is the most likely cause and the mechanism is
+visible in HF's source, but the experiment that would prove it has not been
+run.
+
+gigatrain scales the other way on the 64-core box: 8.4 s at 1 thread to 4.7 s
+at 48, flat through 96.
 
 Full methodology, per-stage memory profiles, and the designs that were
 measured and rejected are in [BENCHMARKS.md](BENCHMARKS.md). Reproduce with
@@ -105,7 +112,14 @@ document does not exist anywhere else, including HuggingFace's own docs.
 - the ByteLevel pretokenizer diffed against HF over every non-surrogate BMP
   codepoint from U+0020 up, in 8 contexts (~508k cases), plus real corpora
 - 1000 randomized fuzz trials biased toward count ties and same-char runs
-- output identical across 1, 2, 3, 7 and 16 threads, in every mode
+- **vocabularies** diffed alongside merge lists — ids, specials and the
+  alphabet can drift while every merge stays identical
+- output identical across 1, 2, 3, 7 and 16 threads for whitespace and
+  ByteLevel; the decorated (`##`, `</w>`) modes are checked for reproducibility
+  at 1, 4 and 16 threads, against themselves rather than against HF
+- parallel range readers exercised on a small corpus via
+  `GIGATRAIN_MIN_RANGE`, which lowers the 64 MiB-per-reader threshold so the
+  chunk-boundary skip/overshoot rules actually execute in CI
 
 A separate CI job builds the wheel and round-trips the Python bindings'
 `tokenizer.json` through `tokenizers.Tokenizer.from_file()`, checking it
@@ -123,6 +137,7 @@ and **12.9 GB** of FineWeb, the last by
 | 12.9 GB | ByteLevel | 31,790 | 38.0 s | 257.1 s | identical |
 | 12.9 GB | whitespace | 16,969 | 107.8 s | 496.9 s | identical |
 | 1 GB | whitespace | 25,168 | — | — | identical |
+| 1 GB | ByteLevel | — | — | — | identical |
 | 100 MB | ByteLevel | 31,800 | — | — | identical |
 | 100 MB | whitespace | 29,298 | — | — | identical |
 
@@ -184,7 +199,9 @@ $GT --vocab-size 32000 --words-tsv counts.tsv
 
 Options: `--min-frequency`, `--special` (repeatable, order-significant),
 `--max-token-length`, `--limit-alphabet`, `--threads`, `--pretokenizer`,
-`--continuing-subword-prefix`, `--end-of-word-suffix`, `--wordpiece`.
+`--continuing-subword-prefix`, `--end-of-word-suffix`, `--wordpiece`,
+`--vocab-out PATH` (writes the vocabulary as a JSON array in id order, which
+is what the parity harness diffs).
 
 `GIGATRAIN_STATS=1` prints stage-boundary RSS, structure sizes, and phase-2
 sub-stage timings.
@@ -219,13 +236,16 @@ landed, phase 1 — not the merge loop — became ~83% of runtime.
   freed pages; identical work measured 419 MB there and 277 MB on Linux.
 - **HuggingFace is non-reproducible with `##`.** Three runs over an identical
   corpus give three different merge lists and vocabularies, because decorated
-  token ids come from hash-map order and feed the tie-break
-  ([#2066](https://github.com/huggingface/tokenizers/issues/2066)). This makes
-  `WordPieceTrainer` non-reproducible by default. gigatrain registers those
-  tokens in sorted order and *is* reproducible; agreement with any single HF
-  run is ~99.6% of merges, which is as close as a deterministic trainer can
-  get to a moving target. Byte-exact parity is claimed only for the
-  undecorated modes.
+  token ids come from hash-map order and feed the tie-break. This makes
+  `WordPieceTrainer` non-reproducible by default. An open PR fixes it
+  ([#2066](https://github.com/huggingface/tokenizers/pull/2066), unmerged),
+  and the bug is still present in 0.23.1. gigatrain registers those tokens in
+  sorted order and *is* reproducible; agreement with any single HF run is
+  ~99.6% of merges. That is **not** the best a deterministic trainer could do —
+  in the minority of configurations where HF happens to be deterministic,
+  gigatrain still differs on some of them, because it picks a different
+  registration order rather than replicating HF's. See PARITY.md for the
+  numbers. Byte-exact parity is claimed only for the undecorated modes.
 - **Memory is input-dependent, not just size-dependent.** The reader must
   buffer until it finds a cut point, so a corpus with no whitespace at all
   peaks at ~4.5x its size, and under `--pretokenizer bytelevel` (which cuts
@@ -236,6 +256,16 @@ landed, phase 1 — not the merge loop — became ~83% of runtime.
 - **Input must be a regular file.** Ranges come from the stat size and the
   readers seek, so pipes and process substitution are rejected with an error
   rather than silently producing an empty tokenizer.
+- **A single pretoken must fit in 4 GiB.** Batch offsets are `u32`, so one
+  "word" larger than that aborts (exit 101) rather than corrupting output.
+  Under `--pretokenizer bytelevel` the cut rule is newline-only, so this means
+  a single 4 GiB *line* — reachable with a one-line JSON dump or a file using
+  `\r`-only line endings. Until recently this deadlocked instead of aborting
+  whenever the run had only one scanner thread (`--threads` 1–3).
+- **Merge output cannot represent a token containing a space.** The CLI prints
+  `left<space>right`, so `--continuing-subword-prefix`, `--end-of-word-suffix`
+  and `--words-tsv` reject values containing spaces. The Python API returns
+  pairs and is unaffected.
 - **Scope.** No Unigram/SentencePiece model. Wheels are built for Linux,
   macOS and Windows by `.github/workflows/release.yml` on a version tag, but
   nothing is published to PyPI yet, so installation means a local
@@ -276,7 +306,8 @@ the findings that undercut this project. In short:
   Measured here, its merges match HF exactly on LF corpora but diverge from
   rank 0 on CRLF corpora, because it does not replicate HF's line-at-a-time
   file feeding.
-- **[ffbpe](https://github.com/tokn-ai/ffbpe)** (July 2026) reports 1 GiB in
+- **[ffbpe](https://github.com/tokn-ai/ffbpe)** (created December 2025;
+  renamed from `unitoken` and released as v0.1.8 in July 2026) reports 1 GiB in
   5.58 s in a bounded-memory table — at vocab 10k on Chinese text from a
   precomputed bigram inventory, not as a headline speed claim. Measured
   end-to-end from raw text at vocab 32k it is 65.4 s.

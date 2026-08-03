@@ -1,29 +1,59 @@
-# Draft: issue for huggingface/tokenizers
+# Upstream: do NOT file this as a new issue
 
-Not filed. This is a draft for review — filing it is a decision for the repo
-owner, and it should probably be checked against the latest `tokenizers`
-release first, since the measurements below are on 0.22.2.
+**Status: withdrawn as an issue draft.** An earlier version of this file was a
+ready-to-file bug report against `huggingface/tokenizers` describing
+`BpeTrainer` nondeterminism under `continuing_subword_prefix` /
+`end_of_word_suffix`. Filing it would have been wrong on two counts.
 
-Related existing issues: #2066, #1794 (both report nondeterminism without
-isolating the trigger).
+## What was wrong with the draft
 
----
+**1. It described #2066 as an issue that "reports nondeterminism without
+isolating the trigger". #2066 is an open pull request that isolates it
+exactly.**
 
-**Title:** `BpeTrainer` is non-deterministic when `continuing_subword_prefix`
-or `end_of_word_suffix` is set (so `WordPieceTrainer` is non-reproducible by
-default)
+[huggingface/tokenizers#2066](https://github.com/huggingface/tokenizers/pull/2066),
+*"Make BPE/WordPiece training deterministic"*, opened 2026-05-22 by
+`ATOM00blue`, still open, +99/−1 in `tokenizers/src/models/bpe/trainer.rs`. Its
+body names the same root cause the draft did — `tokenize_words` assigning ids
+while iterating an `AHashMap`, those ids feeding `Merge::cmp`'s tie-break — and
+notes the same contrast with `compute_alphabet`, which already sorts. It
+proposes the same class of fix and adds `test_train_is_deterministic`.
 
-**Body:**
+The draft's "Cause" and "Suggested fix" sections, and its closing "I implemented
+exactly this in a separate trainer", would have restated an existing
+contributor's open PR as new work. That is the kind of mistake that is hard to
+walk back publicly.
 
-Training the same corpus twice with `continuing_subword_prefix` set produces
-different merge lists and different vocabularies. Without it, training is
-deterministic. Since `WordPieceTrainer` sets `continuing_subword_prefix("##")`
-in its default builder, **WordPiece training is not reproducible by default**.
+**2. The diagnosis is still correct — only the framing was wrong.** Checked
+against `tokenizers` v0.23.1: `tokenize_words` still iterates `wc` unsorted and
+`pair_counts` is still `i32`. So the reproducer below holds against current
+releases; the bug is real and unfixed *in a release*, because the fix is sitting
+in an unmerged PR.
 
-This looks like the underlying cause of #2066 and #1794, which report
-nondeterminism but do not isolate the trigger.
+## What is actually worth doing
 
-### Reproduction
+Not a new issue. Options, in rough order of value:
+
+1. **Comment on #2066 with independent confirmation.** An outside reproduction
+   on a different corpus, plus the impact framing the PR does not state — that
+   `WordPieceTrainer` sets `continuing_subword_prefix("##")` in its default
+   builder, so *WordPiece training is non-reproducible by default*, and anyone
+   trying to verify a released tokenizer was trained from the data claimed
+   currently cannot. Unmerged PRs are often waiting on evidence that the bug
+   matters to someone other than the author.
+
+2. **Note the ordering choice.** #2066 sorts the word counts before assigning
+   ids. gigatrain instead registers the decorated token strings themselves in
+   sorted order. Both are deterministic; they are not the *same* determinism, so
+   a merged #2066 would still not agree merge-for-merge with gigatrain's
+   decorated modes. If upstream determinism is going to become the reference,
+   it is worth asking which order they intend to freeze before matching it.
+
+3. **The `i32` overflow is a separate, still-unfiled matter** —
+   [#2058](https://github.com/huggingface/tokenizers/issues/2058) covers it and
+   is genuinely an issue rather than a PR.
+
+## Reproducer (kept — it is independently useful)
 
 ```python
 import json
@@ -43,8 +73,7 @@ for label, kw in [("plain", {}),
     print(label, "deterministic" if runs[0] == runs[1] == runs[2] else "NOT deterministic")
 ```
 
-Observed on `tokenizers` 0.22.2, corpus = Project Gutenberg *War and Peace*
-(any corpus with enough word-internal characters will do):
+Observed on `tokenizers` 0.22.2, corpus = Project Gutenberg *War and Peace*:
 
 ```
 plain   deterministic
@@ -55,57 +84,12 @@ suffix  NOT deterministic     # merge lists first differ at index 1266
 Across three runs with `##`, the runs shared only 1805 of 1813 merges, and the
 vocabularies also differed.
 
-### Cause
+## Related
 
-In `BpeTrainer::tokenize_words` (`models/bpe/trainer.rs`), decorated tokens
-are created while iterating the word-count map:
-
-```rust
-for (word, count) in wc {           // wc: AHashMap<CompactString, u64>
-    for (is_first, is_last, c) in word.chars().with_first_and_last() {
-        let mut s = c.to_string();
-        if !is_first { /* prepend continuing_subword_prefix */ }
-        if is_last   { /* append end_of_word_suffix */ }
-        if !w2id.contains_key(&s) {
-            id2w.push(s.clone());   // <-- id depends on iteration order
-            w2id.insert(s, (id2w.len() - 1) as u32);
-        }
-        ...
-    }
-}
-```
-
-`wc` is an `AHashMap`, so iteration order varies between processes. Those ids
-then feed the tie-break comparator:
-
-```rust
-impl Ord for Merge {
-    fn cmp(&self, other: &Self) -> Ordering {
-        if self.count != other.count { self.count.cmp(&other.count) }
-        else { other.pair.cmp(&self.pair) }   // <-- compares vocabulary ids
-    }
-}
-```
-
-so equal-count pairs are ordered by ids that are themselves order-dependent,
-and the output varies run to run.
-
-Without decoration this does not arise: every token entered here is a single
-character already registered by `compute_alphabet`, which sorts by codepoint,
-so no new ids are allocated in map order.
-
-### Suggested fix
-
-Register the decorated tokens in a deterministic order before tokenizing —
-collect the set that will be needed and insert it sorted. That is O(alphabet)
-extra work and makes ids independent of map iteration order.
-
-I implemented exactly this in a separate trainer and it produces byte-identical
-output across runs and thread counts, so the approach works in practice.
-
-### Impact
-
-Anyone who needs to rebuild a WordPiece vocabulary reproducibly — for
-provenance, for a paper, or to verify a released tokenizer was trained from
-the data claimed — currently cannot, and there is no warning that this is the
-case.
+- [#2066](https://github.com/huggingface/tokenizers/pull/2066) — **open PR**,
+  fixes this, unmerged as of 2026-08-02.
+- [#1794](https://github.com/huggingface/tokenizers/issues/1794) — open issue,
+  `WordPieceTrainer.train_from_iterator` is not deterministic. #2066 says
+  "Fixes #1794".
+- [#2058](https://github.com/huggingface/tokenizers/issues/2058) — `i32` pair
+  count overflow. Separate bug, separate fix.

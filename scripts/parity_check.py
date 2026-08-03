@@ -9,8 +9,10 @@ Usage:
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -47,7 +49,9 @@ def hf_train(files, args):
     elapsed = time.perf_counter() - t0
     model = json.loads(tok.to_str())["model"]
     merges = [tuple(m) for m in model["merges"]]
-    return merges, elapsed
+    # vocab is {token: id}; invert to id order so it compares positionally.
+    vocab = [t for t, _ in sorted(model["vocab"].items(), key=lambda kv: kv[1])]
+    return merges, vocab, elapsed
 
 
 def gigatrain_train(files, args):
@@ -68,6 +72,9 @@ def gigatrain_train(files, args):
         cmd += ["--continuing-subword-prefix", args.continuing_subword_prefix]
     if args.end_of_word_suffix is not None:
         cmd += ["--end-of-word-suffix", args.end_of_word_suffix]
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        vocab_path = f.name
+    cmd += ["--vocab-out", vocab_path]
     cmd += files
     t0 = time.perf_counter()
     proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -78,7 +85,12 @@ def gigatrain_train(files, args):
         a, sep, b = line.partition(" ")
         assert sep, f"bad merge line: {line!r}"
         merges.append((a, b))
-    return merges, elapsed
+    try:
+        with open(vocab_path, encoding="utf-8") as fh:
+            vocab = json.load(fh)
+    finally:
+        os.unlink(vocab_path)
+    return merges, vocab, elapsed
 
 
 def main():
@@ -96,11 +108,11 @@ def main():
     args = p.parse_args()
 
     print(f"HF tokenizers training (vocab={args.vocab_size})...", file=sys.stderr)
-    hf_merges, hf_time = hf_train(args.files, args)
+    hf_merges, hf_vocab, hf_time = hf_train(args.files, args)
     print(f"  {len(hf_merges)} merges in {hf_time:.2f}s", file=sys.stderr)
 
     print("gigatrain training...", file=sys.stderr)
-    our_merges, our_time = gigatrain_train(args.files, args)
+    our_merges, our_vocab, our_time = gigatrain_train(args.files, args)
     print(f"  {len(our_merges)} merges in {our_time:.2f}s (incl. subprocess)", file=sys.stderr)
 
     n = min(len(hf_merges), len(our_merges))
@@ -119,10 +131,28 @@ def main():
         )
         sys.exit(1)
 
+    # Identical merges do not imply identical vocabularies: ids, special
+    # tokens and the alphabet can drift while every merge stays the same.
+    nv = min(len(hf_vocab), len(our_vocab))
+    for i in range(nv):
+        if hf_vocab[i] != our_vocab[i]:
+            print(f"VOCAB DIVERGENCE at id {i}:")
+            lo = max(0, i - 3)
+            for j in range(lo, min(nv, i + 4)):
+                marker = " <-- HERE" if j == i else ""
+                print(f"  [{j}] hf={hf_vocab[j]!r} ours={our_vocab[j]!r}{marker}")
+            sys.exit(1)
+    if len(hf_vocab) != len(our_vocab):
+        print(
+            f"VOCAB LENGTH MISMATCH: hf={len(hf_vocab)} ours={len(our_vocab)} "
+            f"(first {nv} identical)"
+        )
+        sys.exit(1)
+
     speedup = hf_time / our_time if our_time > 0 else float("inf")
     print(
-        f"PARITY OK: {len(hf_merges)} merges identical. "
-        f"hf={hf_time:.2f}s ours={our_time:.2f}s ({speedup:.1f}x)"
+        f"PARITY OK: {len(hf_merges)} merges and {len(hf_vocab)} vocab entries "
+        f"identical. hf={hf_time:.2f}s ours={our_time:.2f}s ({speedup:.1f}x)"
     )
 
 

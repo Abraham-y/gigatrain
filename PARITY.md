@@ -119,6 +119,43 @@ Extrapolating the most frequent FineWeb bigram, the threshold lands around
 120-150 GB of English web text — below the scale this project targets. Above
 it, gigatrain's output is arguably the correct one, but it is **not** HF's.
 
+### The negative direction, reachable at 38 bytes
+
+The overflow above needs 2^31 occurrences. The **opposite** sign error needs
+eight words, and gigatrain must reproduce it.
+
+Under `continuing_subword_prefix` (or `end_of_word_suffix`) combined with
+`max_token_length`, a pair count can go **negative**. Merge-time id reuse is
+what does it: when a merge produces a token that already has an id — e.g.
+`('##', '##c') -> '##c'` — the `-1`/`+1` neighbour deltas no longer cancel,
+because the length guard rejects the `+1` while the `-1` still applies. A pair
+already at zero is decremented to `-1`.
+
+HF then evaluates `pair_counts[&pair] as u64`. That turns `-1` into
+`18446744073709551615`, which passes the staleness re-check, is not `< 1`, and
+**wins the heap immediately** — so HF emits an extra merge for a pair that
+occurs nowhere in the corpus. gigatrain's `live as u64` on an `i64` sign-extends
+to the same value and reproduces this exactly. (`i32` vs `i64` is irrelevant
+here: both sign-extend identically for any value in `i32` range.)
+
+Minimal reproducing case, 8 words / 38 bytes:
+
+```
+corpus: '##c ##cac# #ab c# #### accc#a#a#b a cb'
+--vocab-size 244 --continuing-subword-prefix '##' --max-token-length 4 \
+  --special a --special '<unk>'
+```
+
+gigatrain emits 15 merges, with `('##c', '##a')` at index 11 — the phantom
+merge. Verified against HF over 200 runs: HF produced 8 distinct outputs
+(13, 14 or 15 merges, per the decorated-mode nondeterminism below), and the
+**13 runs that landed on gigatrain's token ordering matched it exactly**,
+phantom merge included.
+
+Only `max_token_length` 4 triggers it on this corpus; 2, 3, 5, 6, 8, 100 and
+unset do not. The behaviour is undocumented upstream and is not what any
+reading of the API would predict, which is precisely why it is specified here.
+
 ## Pretokenization reference points
 
 - `WhitespaceSplit` = split on `char::is_whitespace`, delimiters removed.

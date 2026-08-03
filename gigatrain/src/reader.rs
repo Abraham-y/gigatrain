@@ -31,6 +31,21 @@ fn is_ws(b: u8) -> bool {
 }
 
 /// Split `total` bytes into at most `n` ranges of at least `min_range` bytes.
+/// Smallest byte range worth giving its own reader thread.
+///
+/// 64 MiB in production: below that, a second reader costs more in seeking than
+/// it gains in throughput. `GIGATRAIN_MIN_RANGE` overrides it so the parity gate
+/// can exercise multi-reader splitting — including `read_range`'s skip and
+/// overshoot rules at range boundaries — without a 128 MB corpus. Those branches
+/// are otherwise unreachable in CI, which runs on files of a few MB.
+pub fn min_range_bytes() -> u64 {
+    std::env::var("GIGATRAIN_MIN_RANGE")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(64 << 20)
+}
+
 pub fn split_ranges(total: u64, n: usize, min_range: u64) -> Vec<(u64, u64)> {
     if total == 0 {
         return vec![];

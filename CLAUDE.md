@@ -22,10 +22,15 @@ HuggingFace's `BpeTrainer` is effectively unusable past a few GB:
 workaround commenters showed does not apply to training). #1313 used
 `vocab_size=512` on unsegmented data, so its merge loop was nearly free and
 this project does **not** reproduce it — the cause was degenerate
-pretokenization. The live memory issues are #1795 and #1824. Separately,
-measurement here found HF's trainer gets ~19x *slower* going from 10 to 64
-cores, which is a plausible contributing factor in #1313 and is a finding in
-its own right.
+pretokenization, as a maintainer diagnosed in the thread at the time. The live
+memory issues are #1795 and #1824.
+
+Separately, HF measured much slower on a 64-core Linux box than on a 10-core
+laptop (9.7 s → 181 s at 100 MB). The mechanism is visible in its source
+(rayon-parallel pair counting reduces per-thread hash maps). But **this is not
+a controlled core-count experiment** — ISA, OS, allocator and machine all
+differ — so it must not be quoted as "19x slower from more cores". Running an
+HF thread sweep on one box is an outstanding task.
 
 Everything published in response is hobbyist-scale: blog posts reporting 2000x
 on a 114 MB Gutenberg corpus and 230x on TinyStories, plus a header-only C++
@@ -42,21 +47,27 @@ Secondary motivation: this unblocks research. Nobody studies vocabulary design
 empirically at scale because you can't afford to train twenty vocabularies on a
 terabyte. Make it cheap and that becomes tractable.
 
-**Correction, after doing exactly that (docs/sweep-results.md).** The premise
-holds — the sweeps took minutes where they would have taken days — but the
-result argues against the framing. Across English, code and multilingual
-corpora, going from 100 MB to 10 GB changes fertility by at most 1.3%.
-Sampling a corpus down costs almost nothing measurable.
+**Attempted, and retracted (docs/sweep-results.md).** The premise holds — the
+sweeps took minutes where they would have taken days — but the *results* were
+withdrawn after an adversarial audit found six independent defects in the
+experiment: the multilingual held-out set was a single language, the
+per-language equity numbers were measured in-sample, the corpora were never
+language-balanced, the "seeds" shared 91–95% of their documents for English
+and 0% for multilingual, and the rank-stratified overlap metric was measuring
+the byte alphabet rather than learned merges.
 
-What *does* matter is composition, not size: using an English tokenizer on
-multilingual text costs 70.6% of compression, and the worst-served language
-in a five-language vocabulary needs 2.2x as many tokens as the best-served,
-a gap that quadrupling the vocabulary does not close.
+Nothing quantitative from that sweep should be repeated — in particular the
+"70.6% multilingual compression cost" and the "2.2x worst-served language"
+figures, both of which were wrong for the reasons above. What survives is only
+a coarse shape, for English and code: vocabulary overlap with a large-corpus
+reference falls as the training corpus shrinks and falls faster for larger
+vocabularies, while fertility moves very little.
 
-So the honest pitch is "training is now fast and exact", not "you were losing
-something by sampling down".
+The pitch that remains is "training is now fast and exact". Whether sampling
+down costs anything is once again an open question, and answering it properly
+is the point of rebuilding the experiment.
 
-## Status, 2026-08-03
+## Status, 2026-08-02
 
 Milestones 1-6 are done and milestone 7 is half done (WordPiece). The trainer
 holds byte-exact HuggingFace parity, verified at 12.9 GB in both

@@ -1,6 +1,6 @@
 # RETRACTED — do not cite
 
-An adversarial audit on 2026-08-03 found that most of the results below rest
+An adversarial audit on 2026-08-02 found that most of the results below rest
 on broken experimental setup. **The measurements are not trustworthy and the
 conclusions drawn from them are withdrawn.** The document is kept, in full,
 because the failures are more instructive than the findings were.
@@ -57,20 +57,64 @@ because the failures are more instructive than the findings were.
    out-of-alphabet bytes — measured at 22.3% of the stream in one case —
    while `bytes_per_token` still divides by the full byte count.
 
+8. **Smaller internal inconsistencies**, each independently checkable:
+   - The seed table and the main grid report the *same labelled cell* against
+     different references — `seeds()` defaults to `sizes="100,300,1000"` so its
+     reference is 1 GB, while the main grid's is 10 GB (English) / 3 GB
+     (others). Hence English 100 MB overlap is 0.930 in one table and 0.916 in
+     the other.
+   - Finding 3 uses bytes/token to compare across scripts, which §3 of this
+     same document later declares invalid (UTF-8 width confound). The
+     multilingual column being ~3.0 bytes/char Japanese makes 4.58 vs 4.39
+     mostly an encoding-width artifact.
+   - "The top-N rows are identical between the vocab 8000 and 32000 runs"
+     cannot hold: strata are built for `n <= v`, so the vocab-8000 run has no
+     top-16000 row and terminates at n=8000.
+   - The worst-served language is not stable across vocabulary sizes —
+     Japanese at 8k (1.237), Hindi at 32k (1.544), with Japanese improving 35%.
+     A "stable 2.2x ratio" was read as a stable phenomenon.
+   - "Five languages, four scripts" — Latin, Cyrillic, Arabic, Devanagari and
+     Japanese is **five** scripts.
+
+## And the finding was not new anyway
+
+Independently of every defect above: **the headline measurement had already
+been published.** Vocabulary overlap against a large-corpus reference as a
+function of training-corpus size is Reddy et al.
+([arXiv:2502.20273](https://arxiv.org/abs/2502.20273)) §1/Fig. 1, which reports
+shared vocabulary against a 900 GB reference rising "from approximately 58% to
+97% for BPE, from 40% to 97% for UnigramLM, and from 4% to 92% for WordPiece"
+— three algorithms, English to 900 GB and Russian to 600 GB.
+
+This repo previously stated the opposite, in writing, twice: that the "90%
+overlap" figure "is not in the paper" and that "nobody has the multilingual
+answer". Both are wrong. Whatever this experiment becomes after rebuilding, the
+corpus-size/overlap curve is not the novel part of it.
+
 ## What survives
 
 Only the coarsest shape, and only for English and code: **vocabulary overlap
 falls with smaller corpora and falls faster for larger vocabularies, while
-fertility moves very little.** The direction is probably right. The specific
-numbers should not be quoted, and nothing about multilingual should be
-quoted at all.
+fertility moves very little.** The direction is probably right, and it agrees
+with Reddy et al. The specific numbers should not be quoted, and nothing about
+multilingual should be quoted at all.
 
 ## Status
 
-The experiment needs rebuilding before any of this is publishable: a held-out
-set sampled across all languages, character-balanced multilingual corpora,
-genuinely independent seeds, an out-of-sample equity measure, a rank metric
-that starts after the alphabet, and a reproducible English reference.
+The experiment needs rebuilding before any of this is publishable:
+
+- a held-out set sampled across *all* languages, disjoint from training
+- character-balanced (not document-balanced) multilingual corpora
+- seeds offset by a global document index, not per-stream
+- an out-of-sample per-language equity measure
+- a rank metric that starts *after* the alphabet
+- a reproducible English reference that does not overlap its own held-out set
+- validation of every cached artifact (a zero-byte cached corpus previously
+  produced a perfectly flat curve across all sizes)
+- one reference per table, stated in the table
+
+And, before any of that: a decision about what question is left to answer that
+Reddy et al. have not. See docs/writeup-plan.md, Part 3.
 
 ---
 

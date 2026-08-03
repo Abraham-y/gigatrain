@@ -1,13 +1,37 @@
 # Publication plan: X thread, blog post, and the paper this unblocks
 
+> **Rewritten 2026-08-02 after an adversarial fact-check.** The previous
+> version of this file contained, among other things: the retracted #1313
+> causal claim (in the very thread whose notes forbid it), a tweet mixing
+> 16-core and 64-core numbers (the exact error its own notes call out), and an
+> instruction not to repeat a Reddy et al. finding that is in fact in the
+> paper. It also treated the intrinsic sweep as a completed result; that sweep
+> has since been **retracted in full** (docs/sweep-results.md). Treat any
+> earlier copy of this file as unusable.
+
 Everything below is drafted against measurements recorded in this repo. Any
 number not in BENCHMARKS.md, PARITY.md or PRIOR_ART.md should be cut rather
-than estimated — the project has already had to retract one claim that was
-asserted rather than computed, and a second retraction would cost more than
-any headline is worth.
+than estimated. This rule has now been broken twice, so it is worth restating
+as a procedure: **before publishing, grep each number in the draft against the
+repo. If it appears only in the draft, it is not a measurement.**
 
 Publish order: flip repo public → tag `v0.1.0` so wheels exist → email Marcel
 Rød → blog post → X thread pointing at the blog.
+
+---
+
+## The one number to lead with
+
+The single cleanest result in the repo, and the one that was buried:
+
+**12.9 GB of FineWeb, vocab 32k, ByteLevel on both sides, 16 cores:
+gigatrain 38.0 s, HuggingFace 257.1 s — and the 31,790 merges are byte
+identical.** (BENCHMARKS.md, "Parity verified at 12.9 GB".)
+
+That is 6.8x, same pretokenizer, same output, one machine, one table row. It
+needs no caveat, which none of the bigger multipliers can say. Every larger
+number in this repo (17.2x, 22.3x, ~50x) compares different pretokenizers,
+different machines, or was never measured at all.
 
 ---
 
@@ -15,156 +39,156 @@ Rød → blog post → X thread pointing at the blog.
 
 ### The framing decision
 
-**Do not lead with "fastest BPE trainer."** It invites an immediate and
-correct rebuttal: gigatoken's trainer is only 1.8x behind, so "fastest" is
-true but thin, and being corrected in the replies costs more than the claim
-gains.
+**Do not lead with "fastest BPE trainer."** gigatoken's trainer is only 1.8x
+behind, so "fastest" is true but thin, and being corrected in the replies costs
+more than the claim gains.
 
-**Lead with the scaling finding.** It is surprising, reproducible, useful to
-people who will never install this, and there is no counter-argument to it —
-it is a measurement of their code, not a claim about mine.
+**Lead with parity at scale**, not with the anti-scaling finding. The earlier
+plan led with anti-scaling; that was a mistake, because the measurement behind
+it is not controlled (see below) and it would be the first thing an informed
+reader attacks.
 
 ### Draft thread
 
 > **1/**
-> HuggingFace's BPE trainer gets ~19x *slower* when you give it more cores.
+> I built a BPE tokenizer trainer that's byte-exact against HuggingFace and
+> ~7x faster.
 >
-> Same 100 MB corpus, same version, same machine class:
-> 10 cores → 9.7 s
-> 64 cores → 181 s
+> 12.9 GB of FineWeb → 32k vocab, same ByteLevel pretokenizer, same 16-core
+> box:
+> · gigatrain 38 s
+> · HuggingFace 257 s
 >
-> At 1 GB: 61 s → 244 s.
+> All 31,790 merges identical.
 >
 > **2/**
-> This is why tokenizers#1313 — 13 GB on 256 threads, unfinished after 10
-> hours — was never explained. It was closed as stale in 2023.
+> Parity is the whole point. A faster trainer nobody can verify is a demo.
 >
-> The cause is visible in the source: rayon-parallel pair counting reduces
-> per-thread hash maps, so more threads means more merging work, not less.
+> Matching HF exactly meant reproducing behaviours that look like bugs — the
+> tie-break rule, stale heap entries being corrected and re-pushed rather than
+> dropped, and `max_token_length` filtering only newly-formed pairs.
 >
 > **3/**
-> I found this while building gigatrain, a BPE trainer with byte-exact
-> HuggingFace parity.
+> My favourite: HF's trainer feeds files **one line at a time**. So a trailing
+> \r\n is terminal within its line and becomes a single token.
 >
-> 12.9 GB of FineWeb → 32k vocab:
-> · gigatrain 38 s / 2.7 GB
-> · HuggingFace 257 s / 29.8 GB
-> · SentencePiece: segfaults
->
-> Merge lists verified identical.
+> Undocumented, and it silently changes your merge list. It's exactly how
+> another trainer I benchmarked matches HF on LF corpora and diverges at merge
+> #0 on CRLF ones.
 >
 > **4/**
 > The memory result surprised me more than the speed.
 >
-> Everyone assumes the pair index is the hazard. Profiled at 1 GB it was
-> 1 MB. The actual hog was phase 1's HashMap<String, u64> — 1.7 GB of a
-> 2.26 GB peak, from per-word allocations and per-worker duplication.
+> Everyone assumes the pair index is the hazard. Profiled at 1 GB it was 1 MB.
+> The actual hog was phase 1's HashMap<String, u64> — 1.7 GB of a 2.26 GB
+> peak, from per-word allocations and per-worker duplication.
 >
 > **5/**
-> Also worth saying plainly: the algorithm is not new. Incremental counting
-> with an inverted index and a lazy heap is Sennrich 2015, formalized by
-> Zouhar 2023, and already in tokenizers, SentencePiece and rustbpe.
+> Worth saying plainly: the algorithm is not new. Incremental counting with an
+> inverted index and a lazy heap is Sennrich 2015, formalized by Zouhar 2023,
+> and already in tokenizers, SentencePiece and rustbpe.
 >
 > The contribution is memory layout and a parallel phase 1.
 >
 > **6/**
-> And gigatoken already ships a BPE trainer with HF tie-breaking. It's
-> undocumented and validated at ~120 KB, but it exists, and it's the closest
-> competitor — 1.8x, not an order of magnitude.
+> And gigatoken already ships a BPE trainer with HF tie-breaking. Undocumented,
+> validated at ~120 KB, but it exists — and it's the closest competitor at
+> 1.8x, not an order of magnitude.
 >
-> Full prior-art writeup in the repo, findings that undercut the project
-> first.
+> Full prior-art writeup in the repo, findings that undercut the project first.
 >
 > **7/**
-> Probably the most reusable artifact isn't the trainer. It's PARITY.md —
-> a specification of HuggingFace's exact training semantics: the tie-break
-> rule, stale-heap handling, an i32 overflow, and which behaviours are
+> Probably the most reusable artifact isn't the trainer. It's PARITY.md — a
+> specification of HuggingFace's exact training semantics: the tie-break rule,
+> stale-heap handling, an i32 overflow, and which behaviours are
 > nondeterministic.
 >
 > That document doesn't exist anywhere else, including HF's own docs.
 >
 > **8/**
-> Then I pointed four adversarial agents at it. They found seven real bugs
-> and ~fifteen overstated claims in three hours — including an invariant I
-> had written a confident comment about that was simply false.
+> Then I pointed adversarial agents at it. They found real bugs in the trainer
+> — and then, in a second pass, six independent defects in my own *research*
+> code that invalidated most of an experiment I'd already written up.
 >
-> All fixed. Blog post with the details: [link]
+> Retracted in the repo. Blog post: [link]
 
 ### Notes for the thread
 
-- Tweet 3 must use the **16-core** numbers (38 s vs 257 s) because those are
-  the runs where merge lists were actually diffed. The 64-core numbers are
-  faster for us but HF's figure there is a whitespace run, and mixing them is
-  the exact error already retracted once.
+- **Tweet 1 must use the 16-core ByteLevel row** (38 s vs 257 s), because that
+  is the one where both sides ran the same pretokenizer *and* the merge lists
+  were diffed. Do not attach peak-RSS figures to it: no RSS was recorded for
+  the 16-core runs. The 2.7 GB / 29.8 GB memory pair is from the **64-core**
+  benchmark and belongs only in a sentence that says so.
+- **Do not claim "19x slower from more cores."** The 9.7 s and 181 s figures
+  come from different ISAs, OSes, allocators and machines. No HF core sweep on
+  a single box exists. If the anti-scaling point is made at all, it is "HF is
+  markedly slower on the bigger machine, and the mechanism is visible in its
+  source" — and someone will rightly ask for the controlled experiment.
+- **Do not mention #1313 as explained, reproduced, or undiagnosed.** It is a
+  `vocab_size=512` run on unsegmented DNA-like data, and a maintainer
+  diagnosed it in-thread as degenerate pretokenization. Claiming it "was never
+  explained" is checkable in thirty seconds and false.
 - Expect these replies and have answers ready:
-  - *"What about gigatoken?"* → covered in tweet 6, link PRIOR_ART.md.
+  - *"What about gigatoken?"* → tweet 6, link PRIOR_ART.md.
   - *"You just implemented the standard algorithm."* → yes, tweet 5 says so.
-  - *"Did you use ByteLevel for yours and whitespace for theirs?"* → no, both
-    rows are like-for-like; the mismatched comparison is documented as a
-    corrected error.
-  - *"Is HF's slowdown just your machine?"* → measured on Modal, x86-64
-    Linux, reproducible with one command in the repo.
-- Do **not** claim to have reproduced #1313. It used `vocab_size=512` on
-  unsegmented data. The repo retracts that; the thread must match.
+  - *"Did you use ByteLevel for yours and whitespace for theirs?"* → no; tweet
+    1 is ByteLevel on both sides. The mismatched comparisons are documented in
+    the repo as corrected errors.
 
 ---
 
 ## Part 2 — The blog post
 
-Working title: **"HuggingFace's tokenizer trainer gets slower when you add
-cores"** — or, if you prefer the build story, **"What I learned making BPE
-training 6x faster, including the five optimizations that didn't work."**
+Working title: **"Byte-exact BPE training, 7x faster — and the six ways I
+fooled myself measuring it."**
 
-Target length 2,500–3,500 words. The value is the reasoning and the negative
-results, not the benchmark table.
+The honest version of this post is now more interesting than the original
+plan, because the retraction story is the strongest material in it. Target
+2,500–3,500 words.
 
 ### Structure
 
 **1. The hook (300 words)**
-The anti-scaling measurement, stated plainly with the numbers. Note that
-published HF figures for 1 GB rise with core count across sources — but be
-careful: two of those three sources don't state their core count, so present
-it as consistent-with, not as triangulation. The repo overstated this once.
+Parity at 12.9 GB with the 38 s / 257 s ByteLevel row. State the hardware
+once, up front.
 
 **2. Why tokenizer training is the neglected stage (400 words)**
 Encoding is solved (gigatoken, ~24 GB/s). Dedup is solved several times over.
 Training has HF #1681 (20 GB OOM on 1.5–2 TB), #1795 (100 GB of RAM for
-~1.5 GB of Chinese JSONL), sentencepiece#1021 (31.2 GB → 1.8 TB, unfinished
-at 24 h). The universal workaround is sampling down.
+~1.5 GB of Chinese JSONL), sentencepiece#1021 (31.2 GB → 1.8 TB, unfinished at
+24 h). The universal workaround is sampling down.
 
-Cite Reddy et al. **correctly**: they trained BPE, UnigramLM and WordPiece
-from 1 GB to 900 GB and found diminishing returns beyond ~150 GB. They used
-HF for UnigramLM and WordPiece and built their BPE trainer on minbpe. Do not
-repeat the "90% overlap" claim — it is not in the paper, and the repo already
-corrected it.
+Cite Reddy et al. **correctly** — and note that this correction replaces an
+earlier, wrong correction in this repo. They trained BPE, UnigramLM and
+WordPiece from 1 GB to 900 GB (English) and to 600 GB (Russian), and found
+diminishing returns beyond ~150 GB for English and ~200 GB for Russian. They
+used HF for UnigramLM and WordPiece and built their BPE trainer on minbpe.
+**The "90% overlap" finding is in the paper** — §1/Fig. 1 reports shared
+vocabulary against the 900 GB reference rising "from approximately 58% to 97%
+for BPE, from 40% to 97% for UnigramLM, and from 4% to 92% for WordPiece."
 
 **3. Parity as the hard requirement (500 words)**
-This is the part most readers won't expect. A faster trainer nobody can
-verify is a demo. Getting byte-exact parity meant reading HF's source and
-reproducing behaviours that look like bugs:
+The part most readers won't expect. Reproducing behaviours that look like bugs:
 - the tie-break rule (higher count, then *smaller* ID pair)
 - stale heap entries corrected and re-pushed, not discarded
 - `max_token_length` filters only newly-formed pairs, never the initial count
 - HF's trainer feeds files **one line at a time**, so a trailing `\r\n` is
   terminal within its line and becomes one token — undocumented, and it
   silently changes output
-That last one is a good story: it's how gigatoken's trainer diverges on CRLF
-corpora while matching exactly on LF ones.
+
+That last one is the good story: it is how gigatoken's trainer diverges from
+rank 0 on CRLF corpora while matching exactly on LF ones.
 
 **4. Where the memory actually goes (600 words)**
 The best technical section. Everyone predicts the pair index; it was 1 MB at
-1 GB. Phase 1's `HashMap<String, u64>` was 1.7 GB of 2.26 GB.
+1 GB. Phase 1's `HashMap<String, u64>` was 1.7 GB of 2.26 GB. Then the three
+fixes (arena-backed sharded counter 1.7 GB → 422 MB; dropping word strings
+once tokenized; flat symbol arena removing 4.1M allocations), and the rejected
+design: broadcasting chunks to every shard owner fixes memory but replicates
+scanning per worker — 4.8 s vs 1.3 s, with an Amdahl floor that worsens as
+cores rise.
 
-Then the three fixes and what each bought:
-- arena-backed counter with disjoint hash shards: 1.7 GB → 422 MB
-- dropping word strings once tokenized
-- flat symbol arena instead of a `Vec` per word (removes 4.1M allocations)
-
-And the design that was rejected: broadcasting chunks to every shard owner
-fixes memory but replicates scanning per worker — 4.8 s vs 1.3 s, with a
-fixed Amdahl floor that worsens as cores increase.
-
-**5. Five optimizations that didn't work (600 words)**
+**5. Four optimizations that didn't work, and one that did — twice (600 words)**
 The section most worth writing, because nobody publishes it.
 
 | change | why it should have worked | result |
@@ -172,66 +196,97 @@ The section most worth writing, because nobody publishes it.
 | 60/40 scanner/owner split | CPU split measured ~58/42 | no effect |
 | byte-table ASCII path in piece scanning | stop decoding chars to classify | **10% slower** |
 | zero-copy batching | removes a memcpy pass over the corpus | slightly worse |
-| thread-pool retune at 10 cores | apparent oversubscription | inside noise |
-| (the same retune at 64 cores) | — | **worked: 1.46x, 2.2x less memory** |
+| thread-pool retune at 10 cores | apparent oversubscription | inside noise, reverted |
+| the same retune at 64 cores | — | **worked: 1.46x, 2.2x less memory** |
+
+(Four rejections; the last row is the fourth change re-measured on different
+hardware, not a fifth change. The earlier draft of this post called it "five
+optimizations that didn't work" over a table whose last row says it worked.)
 
 The ASCII path is the lesson: replacing `char_indices()` with a per-character
 `class_at()` that indexes `text[i..]` re-does a UTF-8 boundary check every
 character. Faster-looking code, slower code.
 
-And the meta-lesson: the same change was correctly rejected at 10 cores and
-correctly accepted at 64. The laptop wasn't a weaker version of the server;
-it was the wrong instrument.
+The meta-lesson: the same change was correctly rejected at 10 cores and
+correctly accepted at 64. The laptop wasn't a weaker server; it was the wrong
+instrument.
 
-**6. The adversarial audit (600 words)**
-Four agents with distinct lenses — parity attacker, unsafe-code auditor,
-concurrency attacker, claims fact-checker — found seven real bugs and about
-fifteen overstated claims in three hours.
+**6. The adversarial audit, in two acts (900 words — now the centrepiece)**
 
-The three worth describing:
+*Act one, the trainer.* Agents with distinct lenses found real bugs. The three
+worth describing:
 - **An invariant I asserted and never verified.** A per-token-ID length table,
   documented as "always exactly HF's per-symbol length." False once
-  `continuing_subword_prefix` is set, because one ID becomes reachable both
-  as an initial symbol and as a merged token. Silent wrong output.
+  `continuing_subword_prefix` is set, because one ID becomes reachable both as
+  an initial symbol and as a merged token. Silent wrong output.
 - **`process::exit(2)` in library code**, which killed the caller's Python
   interpreter on a missing file — no exception, no `finally`, no flush.
 - **A claim that was never computed.** The README said the 12.9 GB run
-  produced a byte-identical merge list. The harness discarded stdout. That is
-  the same criticism the repo levels at gigatoken's 120 KB parity test. It has
-  since been computed: identical, both modes.
+  produced a byte-identical merge list. The harness discarded stdout. Same
+  criticism the repo levels at gigatoken's 120 KB parity test. Since computed:
+  identical, both modes.
 
-Honest closing note: I wrote the code, the tests, and the comments asserting
-correctness. I did not find these. A reviewer would have found the one-word
-`bccaa` counterexample in an afternoon.
+*Act two, the research code — the part actually worth reading.* Having
+hardened the trainer, I pointed the same technique at the experiment I had
+just written up. It found six independent defects, each sufficient on its own
+to invalidate a headline:
+- the multilingual held-out set was a single language (the last shard, and the
+  shards are grouped by language), so "multilingual is 70.6% worse" was
+  "Japanese is"
+- per-language equity was measured on text inside the training corpus
+- the multilingual corpus was never language-balanced — one language held 32%
+  of the characters, the worst-scoring one held 9%
+- the "independent seeds" shared 91–95% of documents for English and 0% for
+  multilingual, so a finding about "variance across samples" was a finding
+  about shard layout
+- the rank-stratified overlap metric was measuring the byte alphabet, because
+  the first merge lands around token id 170 and the "top 256" window is ~97%
+  alphabet
+
+And the one that should have been caught by reading a paper rather than by an
+agent: **the headline measurement was already published.** Vocabulary overlap
+against a large-corpus reference as a function of training size is Reddy et
+al. Figure 1, across three algorithms, at 900 GB — 90x my reference corpus.
+
+Closing note: I wrote the code, the tests, and the comments asserting
+correctness. I did not find any of this. The lesson isn't "use agents"; it's
+that the confidence I had in the sweep was indistinguishable, from the inside,
+from the confidence I had in the parity work — and only one of them was
+earned.
 
 **7. What's actually novel, and what isn't (300 words)**
-Not novel: the algorithm; being first to HF-parity training (gigatoken).
-Novel: the phase-1 sharded shuffle, the parity specification, the scaling
-finding, and a benchmark harness that reports wall time, peak RSS *and* merge
-parity together — no existing trainer benchmark reports memory at all, and
-the only one that ever existed was archived in 2024.
+Not novel: the algorithm; being first to HF-parity training (gigatoken); the
+corpus-size/vocabulary-overlap curve (Reddy et al.).
+Novel: the phase-1 sharded shuffle, the parity specification, and a benchmark
+harness reporting wall time, peak RSS *and* merge parity together — no
+existing trainer benchmark reports memory at all, and the only suite that ever
+existed was archived in 2024.
 
-**8. What this unblocks (200 words)**
-Lead into the paper. See Part 3.
+**8. What this unblocks (200 words)** → Part 3.
 
 ### Things the post must include for credibility
 
 - The reproduction command (`modal run scripts/modal_benchmark.py`)
-- Hardware for every number: 10-core M-series macOS, or 64-core x86-64 Linux
+- Hardware for every number: 10-core M-series macOS, or 64-core x86-64 Linux,
+  or the 16-core parity runs — and never numbers from two of them in one claim
 - Both known divergences: HF's i32 overflow past ~2^31 pair occurrences
-  (~120–150 GB of English text), and the decorated modes where HF is usually
-  nondeterministic and gigatrain differs even where it isn't
+  (~120–150 GB of English text), and the decorated modes, where HF is usually
+  nondeterministic and gigatrain differs even in the cases where it is not
 - The input-dependent memory caveat: a whitespace-free corpus peaks at ~4.5x
   its size — the same failure shape criticised in HF #1681
 - gigatoken, prominently, not buried
+- A link to the retraction, not just a mention of it
 
 ### Things to leave out
 
-- The 17.2x and 22.3x figures (different pretokenizers)
-- Any claim of reproducing #1313
-- "Three unrelated sources" for the scaling triangulation
-- Anything about the 198x naive-vs-incremental Python benchmark — it is a
-  strawman nobody ships
+- The 17.2x, 22.3x and ~50x figures (different pretokenizers, or unmeasured)
+- Any claim of reproducing, explaining, or being first to diagnose #1313
+- "Three unrelated sources" for the scaling triangulation — they are different
+  corpora, vocabularies and machines
+- "~19x slower with more cores" as a controlled result
+- Anything about the 198x naive-vs-incremental Python benchmark — a strawman
+  nobody ships
+- Every quantitative claim from the retracted sweep
 
 ---
 
@@ -240,112 +295,67 @@ Lead into the paper. See Part 3.
 **The tool is not the paper. The tool is the instrument.**
 
 A systems paper on gigatrain would be rejected, and correctly: the algorithm
-is Zouhar et al. 2023, already implemented three times over; the engineering
-is good but not a scientific claim; and the scaling finding is a
-well-characterised bug report about one library.
+is Zouhar et al. 2023, implemented three times over; the engineering is good
+but not a scientific claim; and the anti-scaling observation is an
+uncontrolled measurement of one library.
 
-But the reason the tool was worth building is a real open question.
+### The question, revised
 
-### The question
+The previous version of this section proposed a saturation curve. **Reddy et
+al. have already published it** — English to 900 GB, Russian to 600 GB, three
+algorithms, both the fertility-saturation and the vocabulary-overlap curves.
+Proposing it again would have been the paper's central weakness, and it took
+an adversarial check to notice.
 
-**How much does training-corpus size and composition actually matter for a
-tokenizer, and where does it stop mattering?**
+What is genuinely unclaimed, in descending order of confidence:
 
-Nobody has answered this properly because the experiment was unaffordable.
-Training twenty vocabularies on a terabyte meant weeks of compute, so the
-field trains one vocabulary on a sample and moves on. Reddy et al.
-([arXiv:2502.20273](https://arxiv.org/abs/2502.20273)) got closest — 1 GB to
-900 GB, three algorithms — and had to write their own BPE trainer to do it.
+1. **Does vocabulary identity matter downstream?** Reddy et al. stop at
+   intrinsic metrics, as most of the literature does. If two tokenizers differ
+   in 19% of their tokens but produce equal fertility, does a model trained on
+   each reach the same loss? Both outcomes are publishable: flat means
+   vocabulary identity genuinely doesn't matter and the field can stop
+   worrying; not flat means fertility is an inadequate proxy and the field has
+   been optimising the wrong metric. **This is the paper.** It is also the
+   expensive arm, and the tool does not make it cheaper — the tokenizer
+   training was never the bottleneck for this question.
+2. **Code and domain-specific corpora.** Reddy et al. cover English and
+   Russian natural language. Code, biomedical, legal and deliberately
+   degenerate corpora (DNA, logs) are uncovered, and the degenerate case is
+   where every incumbent trainer falls over — which is the one place the tool
+   is genuinely load-bearing.
+3. **Per-language equity in a properly balanced multilingual vocabulary.**
+   Plausibly novel, but the retracted sweep shows how easily it is measured
+   wrong. Requires character-balanced corpora, held-out sets disjoint from
+   training, and per-language evaluation on text the tokenizer has not seen.
 
-At 12.9 GB in 38 seconds, a sweep that was a cluster job becomes a laptop
-afternoon.
+### Why the tool still matters here
 
-### What the study looks like
-
-A grid over four axes, which is now affordable:
-
-1. **Corpus size**: 100 MB → 1 GB → 10 GB → 100 GB → 1 TB (log steps)
-2. **Vocabulary size**: 8k, 16k, 32k, 64k, 128k, 256k
-3. **Composition**: English-only, multilingual, code-heavy, domain-specific
-   (biomedical, legal), and deliberately degenerate (DNA, logs) — the last
-   matters because that is where every incumbent trainer falls over
-4. **Algorithm**: BPE vs WordPiece (both supported), ideally Unigram later
-
-Measured against: fertility (tokens per word), compression rate, vocabulary
-overlap with the largest-corpus tokenizer, per-language equity in the
-multilingual arm, and — the expensive but decisive one — downstream loss for
-a small model trained on a fixed budget with each tokenizer.
-
-### The claims a paper could make
-
-- **A saturation curve.** Where does more data stop changing the vocabulary?
-  Reddy reports ~150 GB for English; nobody has the multilingual or code
-  answer. A curve per domain would be genuinely new.
-- **The composition-vs-size trade.** Is 10 GB of well-mixed data better than
-  100 GB of English? Practitioners guess at this constantly.
-- **Whether vocabulary differences survive to downstream loss.** Much of the
-  tokenizer literature stops at intrinsic metrics because training models is
-  expensive. Even a small-scale answer would be cited.
-- **A reproducible benchmark.** No leaderboard for tokenizer *trainers*
-  exists; the only suite was archived in 2024, reports no memory, and stops
-  at 1 GB.
-
-### Why it's credible now
-
-- The trainer is byte-exact against the reference implementation at 12.9 GB,
-  so results can't be dismissed as an artifact of a custom trainer — the
-  precise criticism you could level at a minbpe-derived one.
-- Both BPE and WordPiece are supported, so the algorithm axis is real.
-- The harness already reports time, memory and parity together and runs on
-  rented many-core Linux, so the sweep is a script, not an engineering
-  project.
+Less than the previous draft claimed. Honestly: it makes the *sweep* cheap,
+and the sweep was never the expensive part of the question that matters. Where
+it is load-bearing is the degenerate-corpus arm, where HF and SentencePiece
+genuinely fail, and in making the results non-dismissable — byte-exactness
+against the reference implementation is precisely the criticism you could
+level at a minbpe-derived trainer, which is what Reddy et al. used for BPE.
 
 ### Honest risks
 
-- **It's an empirical study, not a method.** Venue matters: this is a
-  resource/benchmark track or a workshop, not a main-conference method paper.
+- **It's an empirical study, not a method.** Resource/benchmark track or
+  workshop, not a main-conference method paper.
 - **The downstream-loss arm is the expensive part** and is what separates
   "interesting" from "citable." Budget for it or scope it explicitly.
-- **Reddy et al. have a head start** on the English-size axis. Differentiate
-  on multilingual, code, degenerate domains, and the downstream arm.
-- **Tokenizer research has a modest audience.** The likely readers are people
-  building non-English or domain models — who are exactly the people who
-  already train their own vocabularies.
+- **Reddy et al. have more than a head start** — they have the result the
+  previous plan proposed as novel. Differentiate on code, degenerate domains,
+  and the downstream arm, or don't write it.
+- **Tokenizer research has a modest audience**, mostly people building
+  non-English or domain models — who already train their own vocabularies.
 
-### The cheap sweep has now been run — see docs/sweep-results.md
+### The order to do it in
 
-English FineWeb, 100 MB to 10 GB, vocab 8k/32k/128k. The result reframes the
-paper:
-
-- Fertility and compression **saturate almost immediately**: 100x more data
-  moves fertility by 0.06–0.5%.
-- Vocabulary identity **does not** saturate, and the gap grows with vocab
-  size: at 128k, 100 MB recovers only 81% of the 10 GB vocabulary.
-- So at 128k vocab, 100x less data gives **19% different tokens and 0.5%
-  different fertility**.
-
-This weakens the "you need more data" motivation for English, and it should
-be stated that way in the blog post rather than omitted.
-
-But it sharpens the paper into a better question:
-
-**"Tokenizer vocabularies differ substantially without differing measurably.
-Does the difference matter?"**
-
-That is a stronger paper than a saturation curve, because it is a critique of
-how the field evaluates tokenizers rather than another benchmark. Two
-outcomes, both publishable: if downstream loss is also flat, then vocabulary
-identity genuinely does not matter and everyone can stop worrying about
-tokenizer training data — a useful negative result. If it is not flat, then
-fertility is an inadequate proxy and the field has been optimising the wrong
-metric.
-
-### The order I'd actually do it in now
-
-1. Ship the tool (blog + X). It stands alone.
-2. Extend the sweep to **code and multilingual** corpora — English web text
-   is the most homogeneous case and the least likely to show an effect. This
-   is still cheap, and it is where the tail plausibly matters.
-3. Only then commit to the downstream-loss arm, which is the expensive part
-   and the part that decides whether the paper is interesting or merely
-   tidy.
+1. Ship the tool (blog + X). It stands alone, and the parity result is real.
+2. **Rebuild the intrinsic sweep correctly** before quoting any number from
+   it. The fixes are known and listed in docs/sweep-results.md: balance by
+   characters not documents, hold out data disjoint from training, sample
+   seeds by global offset rather than per-stream, stratify overlap by merge
+   rank rather than token id, and validate every cached artifact.
+3. Only then decide on the downstream-loss arm, which is what determines
+   whether there is a paper at all.

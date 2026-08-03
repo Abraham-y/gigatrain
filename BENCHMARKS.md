@@ -31,10 +31,18 @@ Baseline: `tokenizers` 0.22.2 (Python), rayon across all 10 cores.
 
 | corpus | trainer | wall | peak RSS | speedup | parity |
 |---|---|---|---|---|---|
-| 100 MB | gigatrain | 1.2 s | 224 MB | ~50x | IDENTICAL |
-| 100 MB | HF BpeTrainer | 61.2 s (incl. pretok) | — | | |
+| 100 MB | gigatrain | 1.2 s | 224 MB | — | IDENTICAL |
 | 1 GB | gigatrain | 8.5 s | 725 MB | — | IDENTICAL |
 | 12.9 GB | gigatrain | **85 s** | **2.2 GB** | — | — |
+
+No HF ByteLevel figure was ever measured on this laptop, so the speedup column
+is empty. (A previous version of this table carried a "~50x" against an HF
+ByteLevel time of 61.2 s at 100 MB. That number was the 1 GB *whitespace* row
+copied one table up; it was never measured. The only real HF ByteLevel timing
+in this repo is 257.1 s at 12.9 GB / 16 cores — see
+[Parity verified at 12.9 GB](#parity-verified-at-129-gb) — where HF's ByteLevel
+run is ~1.9x *faster* than its whitespace run, which is the opposite of what
+the retracted 100 MB row implied.)
 
 ByteLevel favours gigatrain more than whitespace does: HF pays for a regex
 engine per document, while this is a hand-written state machine. It also
@@ -57,8 +65,11 @@ the full BMP parity sweep:
 | ASCII lookup for `\p{L}`/`\p{N}` | 0.67–0.86 s | a binary search over ~700 ranges ran per character, ~13 billion times on the 13 GB corpus |
 | defer byte-to-unicode mapping | 0.45–0.48 s | the map is a bijection, so pieces can be counted raw and mapped only for the ~9M unique words instead of every occurrence |
 
-Together ~2.4x on phase 1, taking 12.9 GB from 104 s to **85 s** and peak RSS
-from 2.4 GB to 2.2 GB.
+Together ~2.4x on phase 1 **at 100 MB**. The effect is much smaller at scale:
+at 12.9 GB phase 1 went 88.9 s → 70.6 s (**1.26x**), taking the whole run from
+104 s to **85 s** and peak RSS from 2.4 GB to 2.2 GB. The 100 MB run is
+dominated by the per-character work these two changes remove; the 12.9 GB run
+is dominated by I/O and hash-map inserts, which they do not touch.
 
 ### The HF baseline at 12.9 GB
 
@@ -178,16 +189,21 @@ swap-bound, so these are real timings rather than "it thrashed".
 
 **Like-for-like is whitespace vs whitespace: 129.4 s against 754.9 s, 5.8x**,
 with identical output. The 43.8 s ByteLevel figure is 17.2x HF's wall time but
-produces a different tokenizer, so it is not a speedup number. `hf_train_cli.py`
-hardcodes `WhitespaceSplit`, so no HF ByteLevel figure exists at this size.
+produces a different tokenizer, so it is not a speedup number. No HF ByteLevel
+figure exists at this size because `modal_benchmark.py:159` does not pass
+`--pretokenizer` to the HF CLI, which defaults to `WhitespaceSplit` — the CLI
+itself supports `bytelevel` (`hf_train_cli.py:19`) and it is used for the
+12.9 GB parity runs below. Running it here is a one-line change and would give
+the missing like-for-like ByteLevel row.
 
 Three things worth stating plainly.
 
 **HuggingFace does finish, given 192 GiB** — in 12.6 minutes, using 29.8 GB of
-resident memory, 11x more than gigatrain's whitespace mode uses (4.4x) and
-ByteLevel mode (11x). On a 34 GB laptop the same job never completed in an
-hour. So the honest claim is not "HF cannot do this"; it is that HF needs
-several times the memory and, like for like, 5.8x the time.
+resident memory. That is 4.4x gigatrain's whitespace mode (6.7 GB, the
+like-for-like comparison) and 11x its ByteLevel mode (2.7 GB). On a 34 GB
+laptop the same job never completed in an hour. So the honest claim is not
+"HF cannot do this"; it is that HF needs several times the memory and, like
+for like, 5.8x the time.
 
 **SentencePiece crashed.** It ran 135 s and died with SIGSEGV (rc=139) at
 20 GB resident, having been given 192 GiB. This matches the segfault reported
@@ -197,9 +213,12 @@ in sentencepiece#862 on a 98 GB corpus. It is a crash, not a timeout.
 whitespace mode, though about twice gigatrain's ByteLevel mode — while taking
 22x longer. If memory were the only axis it would be a genuine contender.
 
-Note the pretokenizer gap widens with scale: ByteLevel is 3x faster than
-whitespace here, because it yields far fewer unique pretokens (9.0M vs 27.4M)
-and phase 2 scales with that.
+Note ByteLevel is 3x faster than whitespace *on this box*, because it yields
+far fewer unique pretokens (9.0M vs 27.4M) and phase 2 scales with that. The
+gap is machine-dependent, not scale-dependent: on the same 12.9 GB file on the
+10-core laptop, ByteLevel is 85.4 s and whitespace 85.7 s — a 1.0x gap. An
+earlier version of this line claimed the gap "widens with scale", which the
+laptop's own numbers contradict.
 
 ## Validation on 64-core Linux (Modal)
 
@@ -216,13 +235,26 @@ Two things this settles.
 **The advantage is not an Apple Silicon artifact.** The ratios hold or widen
 on x86-64 Linux: rustbpe 9.5x -> 11.9x at 1 GB, SentencePiece 13x -> 15.2x.
 
-**HuggingFace degrades badly with core count.** On the 10-core laptop HF took
-9.7 s on 100 MB; on 64 cores it took **181 s**, nearly 19x slower on better
-hardware. At 1 GB it went 61.2 s -> 244.4 s. This is the pathology reported in
-issue #1313 (256 threads, unfinished after 10 h) reproduced directly: HF's
-rayon-parallel pair counting reduces per-thread hash maps, so more cores means
-more merging work, not less. It is the strongest argument for this project,
-and it only appears on hardware the laptop could not simulate.
+**HuggingFace appears to degrade with core count.** On the 10-core laptop HF
+took 9.7 s on 100 MB; on the 64-core box it took **181 s**. At 1 GB it went
+61.2 s -> 244.4 s. The mechanism is visible in the source: HF's rayon-parallel
+pair counting reduces per-thread hash maps, so more cores means more merging
+work, not less.
+
+**This is not a controlled core-count sweep, and should not be quoted as
+"19x slower from more cores".** The two measurements differ in ISA (ARM vs
+x86-64), OS (macOS vs Linux), allocator (libmalloc vs glibc) and machine, not
+only in core count. `modal_benchmark.py`'s thread scan varies threads on
+gigatrain only; no equivalent HF sweep on one box has been run. Until it is,
+the defensible statement is that HF is slower on the bigger machine, with core
+count the most likely cause.
+
+This is also **not** a reproduction of issue #1313 — see
+[the retraction above](#a-retraction-this-is-not-hf-issue-1313). #1313 is a
+`vocab_size=512` run on unsegmented DNA-like data, and its maintainer
+diagnosed it in-thread as degenerate pretokenization. The anti-scaling
+measured here is a separate phenomenon that happens to point the same
+direction.
 
 ### Thread scaling, and a real bug it exposed
 
@@ -269,8 +301,10 @@ ByteLevel, 10 threads: **scan+hash 7589 ms across 5 scanners, insert 5538 ms
 across 5 owners, and owners blocked 2118 ms waiting on recv**. Scanners are
 the critical path — their per-thread ~1518 ms is essentially the 1.63 s wall.
 
-Four changes were implemented against that reading, and all four were
-measured on a clean 64-core box and then reverted:
+Four changes were implemented against that reading and measured on a clean
+64-core box. The first three were reverted; the fourth was rejected at 10
+cores, then re-measured at 64 and landed (it is the thread-budget split
+tabulated above):
 
 | change | rationale | measured (1 GB, 64 threads) |
 |---|---|---|

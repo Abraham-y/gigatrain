@@ -106,6 +106,50 @@ for mode in "--wordpiece" "--end-of-word-suffix </w>"; do
   echo "  $mode reproducible across 1,4,16 threads"
 done
 
+echo "== determinism: parallel range readers (forced on a small corpus) =="
+# A second reader is only allocated per 64 MiB of input, so on CI-sized files
+# `readers` is always 1 and read_range's skip/overshoot rules at range
+# boundaries never execute. GIGATRAIN_MIN_RANGE lowers that threshold so the
+# splitting path is actually covered without a 128 MB download.
+for mode in "" "--pretokenizer bytelevel"; do
+  label="${mode:-whitespace}"
+  ref=$($GT --vocab-size 3000 $mode "$WORK/war_and_peace.txt" 2>/dev/null | shasum | cut -d' ' -f1)
+  for mr in 65536 262144 1048576; do
+    for t in 1 3 8; do
+      got=$(GIGATRAIN_MIN_RANGE=$mr $GT --vocab-size 3000 $mode --threads $t \
+            "$WORK/war_and_peace.txt" 2>/dev/null | shasum | cut -d' ' -f1)
+      [ "$ref" = "$got" ] || {
+        echo "FAIL: $label differs at GIGATRAIN_MIN_RANGE=$mr --threads $t"
+        exit 1
+      }
+    done
+  done
+  echo "  $label identical across 3 range sizes x 3 thread counts"
+done
+
+echo "== CLI guards: inputs the merge-output format cannot represent =="
+# Merges print as "left<space>right", so a decoration containing a space
+# corrupts every line rather than producing a detectable error. The Python
+# API returns pairs and is unaffected.
+printf 'aaaa bbbb aaaa ####\n' > "$WORK/guard.txt"
+for flag in --continuing-subword-prefix --end-of-word-suffix; do
+  if $GT --vocab-size 100 "$flag" " " "$WORK/guard.txt" >/dev/null 2>&1; then
+    echo "FAIL: $flag with a space was accepted; merge output is unparseable"
+    exit 1
+  fi
+  echo "  $flag rejects a value containing a space"
+done
+# --wordpiece and --continuing-subword-prefix both set the same field; last
+# flag silently won before, so the result depended on argument order.
+for order in "--wordpiece --continuing-subword-prefix @@" \
+             "--continuing-subword-prefix @@ --wordpiece"; do
+  if $GT --vocab-size 100 $order "$WORK/guard.txt" >/dev/null 2>&1; then
+    echo "FAIL: conflicting flags accepted ($order)"
+    exit 1
+  fi
+done
+echo "  --wordpiece and --continuing-subword-prefix conflict is rejected"
+
 echo "== fuzz: 1000 random word tables =="
 "$PYTHON" scripts/parity_fuzz.py --trials 1000 --seed 7
 

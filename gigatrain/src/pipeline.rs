@@ -66,6 +66,13 @@ impl ErrorSlot {
     }
 }
 
+/// Upper bound on the worker budget, applied to every entry point.
+///
+/// Sizing does unchecked arithmetic on the thread count and then spawns what it
+/// computes, so an unbounded value is both an overflow hazard and a request to
+/// the OS for more threads than it can create. Well above any real core count.
+pub const MAX_WORKERS: usize = 4096;
+
 /// Phase-1 pipeline sizing, derived from thread count and input size rather
 /// than fixed, so the same binary behaves sensibly from a 1-core container to
 /// a 128-core server and from a 1 MB file to a 100 GB one.
@@ -86,6 +93,14 @@ struct Sizing {
 
 impl Sizing {
     fn plan(total_bytes: u64, nthreads: usize) -> Self {
+        // Clamped before any arithmetic: this is a library entry point reachable
+        // from the Python bindings as well as the CLI, and the sizing below
+        // multiplies `nthreads` several times. Unclamped, `nthreads` near
+        // `usize::MAX` overflowed `4 * nthreads` to 0 and tripped `clamp`'s
+        // `min <= max` assert, and merely large values asked the OS for
+        // billions of threads. No real machine exceeds this.
+        let nthreads = nthreads.clamp(1, MAX_WORKERS);
+
         // Chunks must be small enough that every scanner gets work on a small
         // corpus, and big enough to amortize syscalls on a large one.
         let target_chunks = (nthreads * 8).max(1) as u64;
@@ -105,7 +120,7 @@ impl Sizing {
         // with cores, but keep ranges large enough to stay sequential-ish.
         let readers = nthreads
             .clamp(1, 8)
-            .min((total_bytes / (64 << 20)).max(1) as usize);
+            .min((total_bytes / crate::reader::min_range_bytes()).max(1) as usize);
 
         // Scanners and owners run concurrently, so sizing both at `nthreads`
         // puts ~2x the core count on the CPU (plus readers). Measured on a
@@ -196,9 +211,6 @@ pub fn count_words(
         );
     }
 
-    let (chunk_tx, chunk_rx) = sync_channel::<Arc<Vec<u8>>>(sizing.chunk_queue);
-    let chunk_rx = Arc::new(Mutex::new(chunk_rx));
-
     let mut batch_senders = Vec::with_capacity(sizing.owners);
     let mut batch_receivers = Vec::with_capacity(sizing.owners);
     for _ in 0..sizing.owners {
@@ -208,6 +220,15 @@ pub fn count_words(
     }
 
     let maps: Vec<WordCounter> = std::thread::scope(|s| {
+        // Created inside the scope so the parent's handle can be dropped once
+        // the scanners hold their clones. If it lived in the enclosing frame it
+        // would keep the receiver alive even after every scanner had died, and
+        // the readers below would block forever in `send` on the bounded
+        // channel while the main thread blocked in `join` — a permanent hang
+        // rather than a crash. See the scanner-panic note after the spawns.
+        let (chunk_tx, chunk_rx) = sync_channel::<Arc<Vec<u8>>>(sizing.chunk_queue);
+        let chunk_rx = Arc::new(Mutex::new(chunk_rx));
+
         let owners: Vec<_> = batch_receivers
             .into_iter()
             .map(|rx| {
@@ -300,6 +321,16 @@ pub fn count_words(
             })
             .collect();
         drop(batch_senders);
+        // The scanners now hold every remaining reference to the receiver.
+        // Dropping the parent's handle is what makes a scanner *panic*
+        // survivable: with all scanners gone the channel is closed, so the
+        // readers' `send` returns Err and they exit their loop, letting
+        // `join` below re-raise the panic. Holding this handle instead turns
+        // any scanner panic into a deadlock (readers blocked in `send`, main
+        // blocked in `join`) with no output and no exit code. The only
+        // reachable scanner panic today is `WordBatch::push`'s 4 GiB assert,
+        // hit by a single pretoken larger than u32 can address.
+        drop(chunk_rx);
 
         // Parallel range readers: one reader saturates well below what the
         // scanner pool can consume. Ranges are split by byte offset and made
@@ -327,7 +358,9 @@ pub fn count_words(
                 break;
             }
             let len = meta.len();
-            for (start, end) in crate::reader::split_ranges(len, sizing.readers, 64 << 20) {
+            for (start, end) in
+                crate::reader::split_ranges(len, sizing.readers, crate::reader::min_range_bytes())
+            {
                 jobs.push((path.clone(), start, end));
             }
         }

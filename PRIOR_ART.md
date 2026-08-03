@@ -85,11 +85,14 @@ scale.**
 **2. The "core algorithmic insight" is the status quo.**
 
 Incremental pair counts + inverted index + lazy max-heap is not a new idea
-and is not a differentiator. It is stated in Sennrich et al. 2015
-([arXiv:1508.07909](https://arxiv.org/abs/1508.07909) §3.2), formalized and
-proved O(NM) → O(N log M) by Zouhar et al., *A Formal Perspective on
-Byte-Pair Encoding* ([arXiv:2306.16837](https://arxiv.org/abs/2306.16837),
-Findings of ACL 2023, §4/Thm 4.2), and already implemented in:
+and is not a differentiator. Sennrich et al. 2015
+([arXiv:1508.07909](https://arxiv.org/abs/1508.07909) §3.2) states the
+*incremental* half only — "we increase efficiency by indexing all pairs, and
+updating data structures incrementally"; the words "heap" and "priority" do
+not appear in that paper. The heap, and the O(NM) → O(N log M) proof, are
+Zouhar et al., *A Formal Perspective on Byte-Pair Encoding*
+([arXiv:2306.16837](https://arxiv.org/abs/2306.16837), Findings of ACL 2023,
+§4/Thm 4.2). Both are already implemented in:
 
 - HuggingFace `tokenizers` — `where_to_update: AHashMap<Pair, AHashSet<usize>>`,
   delta updates, `dary_heap::OctonaryHeap` with stale re-push, rayon-parallel
@@ -173,15 +176,20 @@ SentencePiece, and the only competitor whose memory profile resembles
 gigatrain's. It makes no HF-parity claim and uses a different split pattern,
 so again this is speed and memory only.
 
-The same maintainer measured SentencePiece's BPE merge loop as ~76%
-sequential priority-queue maintenance, concluded parallelizing it caps out
-around 1.3x by Amdahl, and wrote that YouTokenToMe-style gains would need
-*"a complete rewrite of the core BPE structures"* toward *"compact arrays,
-custom hash maps, split queues"*
-([#366](https://github.com/google/sentencepiece/issues/366)). That is the
-incumbent's maintainer describing this project's architecture as the correct
-answer and declining to build it — useful corroboration, and also a warning
-that the sequential fraction bounds what is achievable.
+Separately — and this is **taku910, SentencePiece's maintainer**, not
+rustbpe's — SentencePiece's BPE merge loop was measured as ~76% sequential
+priority-queue maintenance, with parallelization capping out around 1.3x by
+Amdahl, and YouTokenToMe-style gains judged to need *"a complete rewrite of
+the core BPE structures"*
+([#366](https://github.com/google/sentencepiece/issues/366), 2026-06-16). The
+"compact arrays, custom hash maps, split queues" phrasing in that thread is
+him describing **YouTokenToMe's** architecture, not prescribing gigatrain's.
+
+That is still useful: the incumbent's maintainer independently concluding that
+the sequential fraction bounds what parallelism can buy, which is the same
+reason CLAUDE.md rules out a GPU. But it is corroboration of the *constraint*,
+not an endorsement of this design. (An earlier version of this file attributed
+the analysis to rustbpe's maintainer and read it as the latter.)
 
 **5. HuggingFace is not catastrophic at 1 GB.**
 
@@ -204,10 +212,16 @@ terminal within its line (`"x\r\n"` is one token, not two).
 
 ## Fresh sweep, 2026-07-31
 
-**ffbpe** ([tokn-ai/ffbpe](https://github.com/tokn-ai/ffbpe), v0.1.8,
-released 2026-07-27) is the newest entrant and the only other project with a
-bounded-memory *exact* trainer — i.e. it is attacking the same problem. Its
-README headline is 1 GiB in **5.58 s**, which would beat everything here.
+**ffbpe** ([tokn-ai/ffbpe](https://github.com/tokn-ai/ffbpe)) is the only
+other project with a bounded-memory *exact* trainer — i.e. it is attacking the
+same problem. It is **not** new: the repo was created 2025-12-07 and v0.1.1
+shipped 2025-12-18; v0.1.8 (2026-07-27) is simply the first release after a
+rename from `unitoken`. It predates gigatrain by about seven months.
+
+Its README's "Measured impact" headline is a 64 MiB Chinese fixture going from
+26.681 s to 3.702 s. The **5.58 s** figure sometimes quoted for 1 GiB is not a
+headline claim at all — it is the *before* value in a bounded-memory RSS
+comparison ("training changed from 5.58 s to 5.85 s").
 
 Measured under the same contract as everything else in BENCHMARKS.md (raw
 text in, vocab 32000, English FineWeb, 10-core macOS):
@@ -219,20 +233,27 @@ text in, vocab 32000, English FineWeb, 10-core macOS):
 
 So **~6x slower end to end**, not faster. Their 5.58 s is a different
 measurement: vocab 10,000, Chinese text, and counting begins from a
-precomputed Unicode-bigram inventory, so pretokenization and word counting
-are excluded. Their own docs say the bundled HF comparison "is not a pure
+precomputed Unicode-bigram inventory, so pretokenization and word counting are
+excluded. Their own docs say the bundled HF comparison "is not a pure
 trainer-algorithm comparison". Nothing dishonest — it measures their
-compressed-inventory contract — but it is not comparable to a raw-text
-number, and it should not be cited as one in either direction. Their
-bounded-memory mode is a genuine feature this project does not have.
+compressed-inventory contract — but it is not comparable to a raw-text number,
+and it should not be cited as one in either direction. Their bounded-memory
+mode is a genuine feature this project does not have.
 
 **fast-bytelevel-bpe-go**
 ([yunnian/fast-bytelevel-bpe-go](https://github.com/yunnian/fast-bytelevel-bpe-go),
-Go, MIT, June 2026) is the only other project that verifies **byte-exact HF
-parity** — it reports `vocab: SAME / merges: SAME` at vocab 32,779 against
-tokenizers 0.23.1. It is ~6x faster than HF and roughly two orders of
-magnitude slower than gigatrain, but on the parity axis it is the nearest
-peer and should be cited rather than ignored.
+Go, MIT, created 2026-06-26 — the genuinely newest entrant) is the only other
+project that verifies **byte-exact HF parity**: it reports `vocab: SAME /
+merges: SAME` at vocab 32,779 against tokenizers 0.23.1. On the parity axis it
+is the nearest peer and should be cited rather than ignored.
+
+**Its speed cannot be compared to gigatrain's.** Its `docs/benchmarks.md`
+reports 739.59 s against HF's 4406.97 s on "the first 846,882 non-empty `text`
+rows" of a JSONL file, on Apple Silicon, `min_frequency=2` — **no corpus size
+in bytes is stated anywhere**. So the ~6x-faster-than-HF ratio is theirs to
+claim, but any cross-comparison to gigatrain is unfounded. An earlier version
+of this file asserted "roughly two orders of magnitude slower than gigatrain",
+which had no basis and sat badly beside gigatrain's own ~6x-over-HF figure.
 
 **GPU BPE training still does not exist.** Everything branded "GPU BPE"
 (BlockBPE, GPUTOK, RAPIDS `nvtext::byte_pair_encoding`) is *encoding* and
@@ -254,28 +275,40 @@ non-English and domain-specific builders, not on frontier labs.
   are `i32` and wrap negative on large corpora, silently corrupting merge
   order. PARITY.md already notes this crate uses `i64`; parity therefore holds
   only where HF itself has not overflowed.
-- [#2066](https://github.com/huggingface/tokenizers/issues/2066),
-  [#1794](https://github.com/huggingface/tokenizers/issues/1794): HF BPE
-  training is reported to be **non-deterministic run to run**, because token
-  ids assigned in `AHashMap` order feed the tie-break comparator. Our parity
-  suite has been stable across many runs against 0.22.2, but this is a reason
-  to pin the HF version in CI (it is) and to state which behaviour is matched.
+- [#1794](https://github.com/huggingface/tokenizers/issues/1794) (open issue):
+  HF BPE/WordPiece training is **non-deterministic run to run**, because token
+  ids assigned in `AHashMap` order feed the tie-break comparator.
+  [#2066](https://github.com/huggingface/tokenizers/pull/2066) is an **open
+  pull request** (not an issue, as this file previously said) that isolates
+  exactly that cause and fixes it by sorting the word counts before assigning
+  ids; it is unmerged, and the bug is still present in 0.23.1. Note that its
+  ordering and gigatrain's are *different* deterministic orders, so a merged
+  #2066 would still not agree merge-for-merge with gigatrain's decorated
+  modes. Our parity suite has been stable across many runs against 0.22.2, but
+  this is a reason to pin the HF version in CI (it is) and to state which
+  behaviour is matched.
 
 **No benchmark suite for trainers exists.** The only one
 ([YouTokenToMe's](https://github.com/VKCOM/YouTokenToMe/blob/master/benchmark.md))
 was archived read-only in 2024, reports no memory and no parity, and stops at
 1 GB. Everything else called a "tokenizer benchmark" measures encoding. The
 published HF figure for 1 GB varies wildly by source — 59 s (arXiv:2604.05192),
-97.7 s (YTTM, 36 cores), 244.4 s (measured here, 64 cores) — which is the
-anti-scaling finding triangulated independently. A harness reporting wall
-time, peak RSS **and** merge parity across core counts may be a contribution
-in its own right.
+97.7 s (YTTM, 36 cores), 244.4 s (measured here, 64 cores).
+
+**This is not triangulation and must not be presented as such.** The three
+figures use different corpora, different vocabulary sizes and different
+machines: the 59 s is a one-line aside on MiniPile with neither hardware nor
+vocabulary stated, in a preprint under review; the 97.7 s is YTTM's Wikipedia
+benchmark at vocab 30,000 on 36 cores; the 244.4 s is FineWeb at vocab 32,000
+on 64 cores. They are *consistent with* HF slowing at higher core counts, and
+nothing more. A harness reporting wall time, peak RSS **and** merge parity
+across core counts may be a contribution in its own right.
 
 ## Landscape
 
 | Tool | Lang | Trains | Best published training number | Largest demonstrated | HF parity | Status |
 |---|---|---|---|---|---|---|
-| HF `tokenizers` | Rust | yes | 1 GB in 59–98 s (61.2 s measured here) | OOM at 20–50 GB on 1–2 TB RAM; did not finish 12.9 GB in 60 min here | is the reference | 0.23.1; no trainer perf work 2024–2026 |
+| HF `tokenizers` | Rust | yes | 1 GB in 59–98 s (61.2 s measured here) | OOM at 20–50 GB on 1–2 TB RAM; did not finish 12.9 GB in 60 min here | is the reference | 0.23.1; actively maintained (see note) |
 | gigatoken `train_bpe` | Rust | yes | 1 MB synthetic | ~1 MB | **yes, CI-tested at 120 KB** | 0.10.0, undocumented |
 | YouTokenToMe | C++ | yes | 1 GB in 25.4 s | 13 GB in <10 min (user report) | no | **archived 2024** |
 | SentencePiece BPE | C++ | yes | **1 GB in 112.7 s / 3.0 GB (v0.2.2, measured here)** | 31.2 GB → 1.8 TB RAM, >24 h | no, by design | v0.2.2, July 2026 |
@@ -283,12 +316,21 @@ in its own right.
 | `karpathy/rustbpe` | Rust | yes | **1 GB in 78.9 s / 1.20 GB (measured here)** | ~2 GB | no claim | active |
 | tiktoken, rust-gems `bpe`, GPUTOK, BlockBPE | — | **no** | encoding only | — | n/a | — |
 
+**Note on HF maintenance.** An earlier version of this table said "no trainer
+perf work 2024–2026". That is false, and it mattered because it framed the
+baseline as abandoned. `tokenizers/src/models/bpe/trainer.rs` has had at least
+two performance commits in that window: *Convert word counts to u64* (#1433,
+2024-02-06) and *Consolidated optimization ahash dary compact str* (#1799,
+2025-06-19) — the latter being exactly the `ahash` / `dary_heap` /
+`CompactString` machinery PARITY.md describes. HF is a moving, maintained
+baseline, which is the correct reason to pin a version in CI.
+
 ## Honest positioning
 
 What is defensible:
 
-> gigatrain trains a 32k BPE vocabulary on 12.9 GB of FineWeb in 104 s and
-> 2.4 GB peak RSS on a 10-core laptop, with a merge list byte-identical to
+> gigatrain trains a 32k BPE vocabulary on 12.9 GB of FineWeb in 85 s and
+> 2.2 GB peak RSS on a 10-core laptop, with a merge list byte-identical to
 > HuggingFace `tokenizers` under a CI parity test covering both whitespace
 > and ByteLevel pretokenization, alphabet construction, ID reuse,
 > `min_frequency`, `max_token_length`, and stale-heap semantics. On the same
@@ -306,11 +348,34 @@ asymmetry between initial and delta counting, `i32` count overflow, the
 reachability of the duplicate-merge path — are documented nowhere else,
 including HuggingFace's own documentation.
 
+## A note on gigatrain's own numbers in this file
+
+**The gigatrain column differs between the comparison tables above, and the
+multipliers are therefore not comparable across them.** At 1 GB ByteLevel on
+the 10-core laptop this repo has recorded 8.5 s (BENCHMARKS.md), 10.22 s (the
+gigatoken and ffbpe tables here) and 14.9 s (the rustbpe table here); at
+100 MB, 1.2 s / 3.07 s / 1.5 s. Each competitor was benchmarked in its own
+paired session, under different background load — and, as BENCHMARKS.md's
+"Measurement noise" section records, an occupied swap file moved identical
+configurations by up to 2x.
+
+So each table is internally valid as a same-session pairing, and none of the
+ratios should be compared *to each other*. Saying "rustbpe is 5–7x slower
+while gigatoken is only 1.8x" silently compares a 14.9 s baseline against a
+10.22 s one. Re-running all competitors in one session on a quiet machine is
+the fix, and it has not been done.
+
 ## Open questions
 
-- Does gigatoken's trainer actually fail at 12.9 GB? (Source inference only.)
+- **Re-run all competitors in a single session** so the gigatrain baseline is
+  one number rather than three (see above). This is the most valuable
+  outstanding benchmark task.
 - SentencePiece at 12.9 GB is **not** a completed measurement: it was stopped
   after ~8.5 minutes wall (~12 min CPU) while still in corpus normalization,
-  having driven the machine to 28 GB of swap. It never reached the merge
-  loop. Worth re-running on a machine with enough RAM to finish.
-- gigatoken's trainer at scale is still unmeasured (source inference only).
+  having driven the machine to 28 GB of swap. It never reached the merge loop.
+  Worth re-running on a machine with enough RAM to finish. (It *did* complete
+  on the 64-core box, where it segfaulted at 20 GB resident after 135 s.)
+- gigatoken's trainer has been measured at 100 MB and 1 GB but **not** at
+  12.9 GB. The earlier "will very likely not survive 12.9 GB" inference was
+  wrong at the sizes tested and is retracted; the large-corpus behaviour is
+  simply unknown, not suspect.
