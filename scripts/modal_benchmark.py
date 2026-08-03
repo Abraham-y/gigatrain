@@ -80,8 +80,13 @@ def _prepare_corpora(sizes):
 
     os.makedirs(f"{DATA}/parquet", exist_ok=True)
     largest = max(sizes)
-    # Each ~2 GB parquet yields roughly 4-5 GB of text.
-    n_parquet = (largest // 4000) + 1
+    # Measured, not estimated: 6 parquets yielded 19,370 MB, i.e. ~3.2 GB of
+    # text each, not the 4-5 GB previously assumed. At 20 GB that shortfall
+    # silently produced a 19.4 GB corpus and a warning rather than the
+    # requested size, which matters because 20 GB is the exact figure in
+    # tokenizers#1681 and in milestone 5. Budget 3 GB per parquet and add one
+    # for rounding; extra downloads are cached and cost only disk.
+    n_parquet = (largest // 3000) + 2
     for i in range(n_parquet):
         path = f"{DATA}/parquet/{i:03d}.parquet"
         # A cached file is only trusted if it is actually a parquet. `curl -s`

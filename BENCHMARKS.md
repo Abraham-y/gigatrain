@@ -220,6 +220,39 @@ gap is machine-dependent, not scale-dependent: on the same 12.9 GB file on the
 earlier version of this line claimed the gap "widens with scale", which the
 laptop's own numbers contradict.
 
+## 19.4 GB on a "normal machine" — milestone 5, and issue #1681's size
+
+CLAUDE.md milestone 5 sets the target *"20 GB corpus trains without OOM on a
+normal machine, directly answering issue #1681"*. Until now the largest run in
+this repo was 12.9 GB, so the target had never been tested.
+
+`modal run scripts/modal_benchmark.py::main --sizes 20000 --cpu 16 --memory 64`
+on **x86-64 Linux, 16 cores, 64 GiB**, vocab 32000. The deliberately modest box
+is the point: #1681 is about OOM, so a 192 GiB machine would not answer it.
+
+| trainer | pretokenizer | wall | peak RSS | outcome |
+|---|---|---|---|---|
+| **gigatrain** | ByteLevel | **47.3 s** | **2.9 GB** | ok |
+| **gigatrain** | whitespace | **137.4 s** | 7.2 GB | ok |
+| HuggingFace 0.22.2 | whitespace | 730.9 s | 36.3 GB | ok |
+
+**Like-for-like is whitespace vs whitespace: 137.4 s against 730.9 s (5.3x),
+on 7.2 GB against 36.3 GB (5.0x).** That 5.3x sits alongside the 5.8x measured
+at 12.9 GB on 64 cores, so the advantage is stable across both scale and core
+count.
+
+The memory line is the one that answers #1681. HuggingFace needed **36.3 GB of
+RAM for 19.4 GB of text — 1.9x the corpus** — which is why a 20 GB corpus OOMs
+on machines that look like they should cope, and it would not have fit on a
+32 GB box. gigatrain's ByteLevel mode used 2.9 GB, **0.15x the corpus and 12.5x
+less than HF**.
+
+**The corpus is 19.4 GB, not 20 GB.** `_prepare_corpora` assumed 4-5 GB of text
+per FineWeb parquet; the measured yield is ~3.2 GB, so six parquets gave
+19,370 MB and the script warned rather than failing. The estimate is now fixed
+(3 GB per parquet plus one), but the numbers above are from the 19.4 GB file
+and are reported at that size.
+
 ## Validation on 64-core Linux (Modal)
 
 Run with `modal run scripts/modal_benchmark.py --sizes 100,1000 --cpu 64`.

@@ -66,6 +66,13 @@ with different output is not a speedup.
 SentencePiece 112.7 s · HuggingFace 244.4 s. (gigatrain's whitespace mode was
 not measured at 1 GB on this box; the trainers it is listed against use their
 own pretokenizers, so none of these is a like-for-like parity comparison.)
+
+**19.4 GB on 16 cores / 64 GiB** — a deliberately modest box, because
+[#1681](https://github.com/huggingface/tokenizers/issues/1681) is about OOM at
+this corpus size: gigatrain 47.3 s / **2.9 GB** (ByteLevel) and 137.4 s /
+7.2 GB (whitespace), against HuggingFace 730.9 s / **36.3 GB** (whitespace).
+Like-for-like that is 5.3x faster on 5.0x less memory. HF needing 1.9x the
+corpus size in RAM is the mechanism behind #1681; gigatrain needs 0.15x.
 gigatoken (18.8 s) and ffbpe (65.4 s) were measured on the 10-core laptop
 instead, where gigatrain is 10.2 s — see [PRIOR_ART.md](PRIOR_ART.md) for
 those same-machine pairings.
@@ -246,13 +253,15 @@ landed, phase 1 — not the merge loop — became ~83% of runtime.
   gigatrain still differs on some of them, because it picks a different
   registration order rather than replicating HF's. See PARITY.md for the
   numbers. Byte-exact parity is claimed only for the undecorated modes.
-- **Memory is input-dependent, not just size-dependent.** The reader must
-  buffer until it finds a cut point, so a corpus with no whitespace at all
-  peaks at ~4.5x its size, and under `--pretokenizer bytelevel` (which cuts
-  only after newlines) a file with no newline is buffered whole. Normal web
-  text is unaffected — 12.9 GB of FineWeb peaks at 2.7 GB — but this is the
-  same shape of failure as the HuggingFace OOM this project criticises, and
-  it is fair to say so.
+- **A corpus with no cut points loses phase-1 parallelism.** The reader buffers
+  until it finds a cut point (whitespace, or a newline under
+  `--pretokenizer bytelevel`). On input with none, seven of eight reader ranges
+  find no boundary and retire, and one thread buffers and scans everything.
+  Measured on a 2.0 GB single-line JSON file against the same 2.0 GB with
+  newlines every 1000 bytes: **155 s vs 9.3 s, and 2.2 GB vs 1.0 GB peak**. The
+  memory side is mild (1.1x the file); the 16.7x slowdown is the real cost.
+  Normal web text is unaffected. See
+  [docs/degenerate-results.md](docs/degenerate-results.md).
 - **Input must be a regular file.** Ranges come from the stat size and the
   readers seek, so pipes and process substitution are rejected with an error
   rather than silently producing an empty tokenizer.
