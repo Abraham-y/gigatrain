@@ -58,6 +58,22 @@ def _sh(cmd, **kw):
     return subprocess.run(cmd, shell=True, text=True, **kw)
 
 
+def _is_parquet(path):
+    """Parquet files begin and end with the magic bytes `PAR1`."""
+    import os
+
+    try:
+        if os.path.getsize(path) < 8:
+            return False
+        with open(path, "rb") as f:
+            if f.read(4) != b"PAR1":
+                return False
+            f.seek(-4, os.SEEK_END)
+            return f.read(4) == b"PAR1"
+    except OSError:
+        return False
+
+
 def _prepare_corpora(sizes):
     """Download FineWeb parquets and slice to the requested sizes."""
     import os
@@ -68,12 +84,23 @@ def _prepare_corpora(sizes):
     n_parquet = (largest // 4000) + 1
     for i in range(n_parquet):
         path = f"{DATA}/parquet/{i:03d}.parquet"
-        if not os.path.exists(path):
-            url = (
-                "https://huggingface.co/datasets/HuggingFaceFW/fineweb/"
-                f"resolve/main/sample/10BT/{i:03d}_00000.parquet"
-            )
-            _sh(f"curl -sL -o {path} '{url}'", check=True)
+        # A cached file is only trusted if it is actually a parquet. `curl -s`
+        # without -f writes an HTTP error body to the output path and exits 0,
+        # so a 404 previously produced a JSON blob named *.parquet that was
+        # then cached forever. The same bug silently corrupted the intrinsic
+        # sweep (see docs/sweep-results.md).
+        if os.path.exists(path) and _is_parquet(path):
+            continue
+        if os.path.exists(path):
+            print(f"  discarding corrupt cached {path}", flush=True)
+            os.remove(path)
+        url = (
+            "https://huggingface.co/datasets/HuggingFaceFW/fineweb/"
+            f"resolve/main/sample/10BT/{i:03d}_00000.parquet"
+        )
+        _sh(f"curl -fsSL -o {path} '{url}'", check=True)
+        if not _is_parquet(path):
+            raise RuntimeError(f"{url} did not return a parquet file")
 
     missing = [mb for mb in sizes if not os.path.exists(f"{DATA}/fineweb_{mb}mb.txt")]
     if missing:
