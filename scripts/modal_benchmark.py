@@ -33,6 +33,9 @@ image = (
         "tokenizers==0.22.2",
         "sentencepiece",
         "rustbpe",
+        # The closest competitor (~1.8x). Omitting it from a comparison table
+        # reads as cherry-picking whether or not it is.
+        "gigatoken",
         "pyarrow",
         "maturin",
     )
@@ -332,3 +335,151 @@ def main(sizes: str = "100,1000", cpu: int = 64, memory: int = 192,
         for row in out["thread_scan"]:
             print(f"  threads={row['threads']:<3} {row['seconds']:7.2f}s "
                   f"{row['peak_mb']:6d} MB")
+
+
+# --------------------------------------------------------------------------
+# Degenerate-corpus study on real data.
+#
+# The laptop run used synthetic corpora and two trainers. This runs the real
+# corpora (human chr21, npm packuments, cdnjs bundles) across every installed
+# trainer with repeats, on a machine that is not the author's laptop.
+# --------------------------------------------------------------------------
+
+
+@app.function(volumes={DATA: volume}, timeout=24 * 3600)
+def degenerate(size_mb: int, vocab_size: int, timeout: int, repeats: int,
+               only: str = ""):
+    import os
+
+    os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
+    print("=== environment", flush=True)
+    _sh("uname -a"); _sh("nproc")
+
+    print("\n=== building gigatrain", flush=True)
+    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+
+    corpus_dir = f"{DATA}/real_{size_mb}mb"
+    print("\n=== acquiring real corpora", flush=True)
+    _sh(f"python3 /repo/scripts/real_corpora.py --out-dir {corpus_dir} "
+        f"--cache-dir {DATA}/real_cache --size-mb {size_mb}", check=True)
+    volume.commit()
+    _sh(f"ls -la {corpus_dir}")
+
+    sel = " ".join(f"--only {o}" for o in only.split(",") if o)
+    out_json = "/tmp/degen_real.json"
+    print("\n=== benchmark", flush=True)
+    _sh(f"python3 /repo/scripts/degenerate_benchmark.py "
+        f"--corpus-dir {corpus_dir} --vocab-size {vocab_size} "
+        f"--timeout {timeout} --repeats {repeats} {sel} "
+        f"--json-out {out_json}")
+
+    import json as _json
+    try:
+        with open(out_json) as f:
+            return _json.load(f)
+    except OSError:
+        return []
+
+
+@app.local_entrypoint()
+def degen(size_mb: int = 45, vocab_size: int = 32000, timeout: int = 900,
+          repeats: int = 3, cpu: int = 16, memory: int = 64, only: str = ""):
+    """Degenerate-corpus study on REAL data:
+    `modal run scripts/modal_benchmark.py::degen`"""
+    rows = degenerate.with_options(cpu=cpu, memory=memory * 1024).remote(
+        size_mb, vocab_size, timeout, repeats, only
+    )
+    print("\n================ DEGENERATE (REAL CORPORA) ================")
+    for r in rows:
+        # Only a TIMEOUT status may be rendered as ">Ns". Rendering every
+        # non-completion that way once turned a harness failure (rc=125, GNU
+        # time rejecting a BSD flag) into a table of fabricated timeouts.
+        if r.get("median_wall"):
+            med = f"{r['median_wall']:.1f}s"
+        elif r.get("status") == "TIMEOUT":
+            med = f">{r['timeout_s']}s"
+        else:
+            med = "—"
+        rss = f"{r['rss']/(1<<20):.0f}MB" if r.get("rss", -1) > 0 else "—"
+        print(f"  {r['corpus']:<24} {r['mode']:<10} {r['trainer']:<14} "
+              f"{med:>9} {rss:>9} {r['status']:>9}  {r['parity']}")
+
+
+# --------------------------------------------------------------------------
+# Controlled core-count sweep.
+#
+# BENCHMARKS.md has long said HuggingFace "gets slower with more cores", based
+# on 9.7 s on a 10-core macOS laptop against 181 s on a 64-core Linux box. That
+# comparison changes ISA, OS, allocator and machine as well as core count, so
+# it was retracted as an uncontrolled measurement. This is the experiment that
+# actually tests it: ONE box, ONE binary, ONE corpus, varying only the number
+# of threads rayon is allowed to use.
+# --------------------------------------------------------------------------
+
+
+@app.function(volumes={DATA: volume}, timeout=12 * 3600)
+def thread_sweep(size_mb: int, vocab_size: int, threads: str, repeats: int):
+    import json
+    import os
+    import statistics
+
+    os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
+    _sh("uname -a"); _sh("nproc")
+    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+    gt = "/repo/gigatrain/target/release/gigatrain"
+
+    _prepare_corpora([size_mb])
+    corpus = f"{DATA}/fineweb_{size_mb}mb.txt"
+    _sh(f"cat {corpus} > /dev/null")
+
+    tlist = [int(t) for t in threads.split(",")]
+    rows = []
+    for t in tlist:
+        for tool in ("hf", "gigatrain"):
+            if tool == "hf":
+                # tokenizers parallelises with rayon, which reads this.
+                cmd = (f"RAYON_NUM_THREADS={t} python3 /repo/scripts/hf_train_cli.py "
+                       f"--vocab-size {vocab_size} {corpus}")
+            else:
+                cmd = (f"{gt} --vocab-size {vocab_size} --threads {t} {corpus}")
+            walls, peaks, rc_last = [], [], 0
+            for _ in range(repeats):
+                secs, peak_mb, rc = _measure(f"{tool} t={t}", size_mb, cmd)
+                rc_last = rc
+                if rc == 0:
+                    walls.append(secs); peaks.append(peak_mb)
+            row = {
+                "tool": tool, "threads": t, "size_mb": size_mb,
+                "vocab_size": vocab_size, "repeats": repeats,
+                "walls": [round(w, 2) for w in walls],
+                "median_s": round(statistics.median(walls), 2) if walls else None,
+                "peak_mb": round(statistics.median(peaks)) if peaks else None,
+                "rc": rc_last,
+            }
+            rows.append(row)
+            print(f"  => {tool} threads={t}: {row['median_s']}s "
+                  f"{row['peak_mb']}MB", flush=True)
+    print(json.dumps(rows, indent=2), flush=True)
+    return rows
+
+
+@app.local_entrypoint()
+def threads(size_mb: int = 100, vocab_size: int = 32000,
+            threads: str = "1,2,4,8,16,32,64", repeats: int = 3,
+            cpu: int = 64, memory: int = 128):
+    """Controlled core-count sweep on one box:
+    `modal run scripts/modal_benchmark.py::threads`"""
+    rows = thread_sweep.with_options(cpu=cpu, memory=memory * 1024).remote(
+        size_mb, vocab_size, threads, repeats
+    )
+    print("\n============ CONTROLLED CORE-COUNT SWEEP (one box) ============")
+    print(f"{'threads':>8}  {'HF':>12}  {'gigatrain':>12}")
+    by = {}
+    for r in rows:
+        by.setdefault(r["threads"], {})[r["tool"]] = r
+    base_hf = by[min(by)]["hf"]["median_s"] if by else None
+    for t in sorted(by):
+        hf = by[t].get("hf", {}).get("median_s")
+        gt = by[t].get("gigatrain", {}).get("median_s")
+        rel = f"  ({hf/base_hf:.2f}x vs 1 thread)" if hf and base_hf else ""
+        print(f"{t:>8}  {hf if hf else '—':>12}  {gt if gt else '—':>12}{rel}")
