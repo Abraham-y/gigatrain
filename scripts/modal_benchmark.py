@@ -487,3 +487,59 @@ def threads(size_mb: int = 100, vocab_size: int = 32000,
         gt = by[t].get("gigatrain", {}).get("median_s")
         rel = f"  ({hf/base_hf:.2f}x vs 1 thread)" if hf and base_hf else ""
         print(f"{t:>8}  {hf if hf else '—':>12}  {gt if gt else '—':>12}{rel}")
+
+
+@app.function(volumes={DATA: volume}, timeout=12 * 3600)
+def one_session(sizes, vocab_size: int, timeout: int, repeats: int):
+    """Every trainer, every size, ONE container, one page cache, repeats.
+
+    BENCHMARKS.md and PRIOR_ART.md currently record gigatrain's own 1 GB
+    ByteLevel time as 8.5 s, 10.22 s and 14.9 s in three different tables,
+    because each competitor was benchmarked in its own session under different
+    background load. None of the published ratios are therefore comparable to
+    each other. This produces one table where they are.
+    """
+    import os
+
+    os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
+    _sh("uname -a"); _sh("nproc")
+    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+
+    size_list = [int(s) for s in sizes.split(",")]
+    _prepare_corpora(size_list)
+    corpus_dir = "/tmp/one_session"
+    os.makedirs(corpus_dir, exist_ok=True)
+    for mb in size_list:
+        src = f"{DATA}/fineweb_{mb}mb.txt"
+        dst = f"{corpus_dir}/fineweb_{mb}mb.txt"
+        if not os.path.exists(dst):
+            os.symlink(src, dst)
+        _sh(f"cat {src} > /dev/null")
+
+    out_json = "/tmp/one_session.json"
+    _sh(f"python3 /repo/scripts/degenerate_benchmark.py "
+        f"--corpus-dir {corpus_dir} --vocab-size {vocab_size} "
+        f"--timeout {timeout} --repeats {repeats} --json-out {out_json}")
+    import json as _json
+    try:
+        with open(out_json) as f:
+            return _json.load(f)
+    except OSError:
+        return []
+
+
+@app.local_entrypoint()
+def onesession(sizes: str = "100,1000", vocab_size: int = 32000,
+               timeout: int = 1800, repeats: int = 3,
+               cpu: int = 16, memory: int = 64):
+    """One comparable table for every trainer:
+    `modal run scripts/modal_benchmark.py::onesession`"""
+    rows = one_session.with_options(cpu=cpu, memory=memory * 1024).remote(
+        sizes, vocab_size, timeout, repeats)
+    print("\n============ ONE-SESSION COMPARISON ============")
+    for r in rows:
+        med = (f"{r['median_wall']:.1f}s" if r.get("median_wall")
+               else f">{r['timeout_s']}s" if r.get("status") == "TIMEOUT" else "—")
+        rss = f"{r['rss']/(1<<20):.0f}MB" if r.get("rss", -1) > 0 else "—"
+        print(f"  {r['corpus']:<22} {r['mode']:<10} {r['trainer']:<14} "
+              f"{med:>9} {rss:>9} {r['status']:>9}  {r['parity']}")
