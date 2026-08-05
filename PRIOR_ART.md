@@ -348,28 +348,33 @@ asymmetry between initial and delta counting, `i32` count overflow, the
 reachability of the duplicate-merge path — are documented nowhere else,
 including HuggingFace's own documentation.
 
-## A note on gigatrain's own numbers in this file
+## A note on gigatrain's own numbers in this file — now resolved
 
-**The gigatrain column differs between the comparison tables above, and the
-multipliers are therefore not comparable across them.** At 1 GB ByteLevel on
-the 10-core laptop this repo has recorded 8.5 s (BENCHMARKS.md), 10.22 s (the
-gigatoken and ffbpe tables here) and 14.9 s (the rustbpe table here); at
-100 MB, 1.2 s / 3.07 s / 1.5 s. Each competitor was benchmarked in its own
-paired session, under different background load — and, as BENCHMARKS.md's
-"Measurement noise" section records, an occupied swap file moved identical
-configurations by up to 2x.
+**The per-competitor tables above are each internally valid but not comparable
+to each other.** At 1 GB ByteLevel on the 10-core laptop this repo recorded
+8.5 s (BENCHMARKS.md), 10.22 s (the gigatoken and ffbpe tables here) and 14.9 s
+(the rustbpe table here); at 100 MB, 1.2 s / 3.07 s / 1.5 s. Each competitor
+was benchmarked in its own paired session under different background load, and
+BENCHMARKS.md's "Measurement noise" section records an occupied swap file
+moving identical configurations by up to 2x.
 
-So each table is internally valid as a same-session pairing, and none of the
-ratios should be compared *to each other*. Saying "rustbpe is 5–7x slower
-while gigatoken is only 1.8x" silently compares a 14.9 s baseline against a
-10.22 s one. Re-running all competitors in one session on a quiet machine is
-the fix, and it has not been done.
+Saying "rustbpe is 5–7x slower while gigatoken is only 1.8x" silently compared
+a 14.9 s baseline against a 10.22 s one. **That has now been fixed**: see
+BENCHMARKS.md, "One-session comparison", which runs every trainer in one
+container against one baseline. On that table the order is unambiguous —
+**gigatoken is the closest competitor at 3.5x, rustbpe is 10.1x, SentencePiece
+15.3x**, with HuggingFace at 6.6x and byte-identical output.
+
+The per-competitor tables above are kept because they carry parity and
+scale-behaviour detail the one-session run does not, but **for any ratio
+claim, quote the one-session table.** They are also on a different machine
+(10-core macOS vs 16-core Linux), so the absolute numbers are not expected to
+agree.
 
 ## Open questions
 
-- **Re-run all competitors in a single session** so the gigatrain baseline is
-  one number rather than three (see above). This is the most valuable
-  outstanding benchmark task.
+- ~~Re-run all competitors in a single session~~ **done 2026-08-05**; see
+  BENCHMARKS.md, "One-session comparison".
 - SentencePiece at 12.9 GB is **not** a completed measurement: it was stopped
   after ~8.5 minutes wall (~12 min CPU) while still in corpus normalization,
   having driven the machine to 28 GB of swap. It never reached the merge loop.

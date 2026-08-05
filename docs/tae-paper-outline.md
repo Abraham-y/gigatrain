@@ -183,11 +183,13 @@ should be the last thing on the page.
 
 ## What must be done before submitting
 
-1. **One-session comparison** *(launched 2026-08-05)* — our own repo reports
+1. ~~One-session comparison~~ **done 2026-08-05.** Our repo reported
    gigatrain's 1 GB ByteLevel time as 8.5 s, 10.22 s and 14.9 s across three
-   tables, because each competitor was benchmarked in a separate session. A
-   paper criticising non-comparable numbers cannot ship with that. One
-   container, all trainers, both sizes, 3 repeats.
+   tables; a paper criticising non-comparable numbers could not ship with that.
+   One container, all five trainers, both sizes, 3 repeats: gigatoken 3.5x,
+   HF 6.6x (byte-identical), rustbpe 10.1x, SentencePiece 15.3x. This is now a
+   worked example *in* the paper — §7 can note that the audit's own author
+   failed criterion 6 until the audit forced the re-run.
 2. **Anonymize.** Double blind. The repository is identifiable; the submission
    must not name it, and the archived-source manifest needs an anonymized host
    or an appendix note.

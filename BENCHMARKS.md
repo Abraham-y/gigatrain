@@ -262,6 +262,56 @@ per FineWeb parquet; the measured yield is ~3.2 GB, so six parquets gave
 (3 GB per parquet plus one), but the numbers above are from the 19.4 GB file
 and are reported at that size.
 
+## One-session comparison — the only mutually comparable table here
+
+Every other multi-trainer table in this repo was assembled from separate
+sessions, which is why gigatrain's own 1 GB ByteLevel time appears as 8.5 s,
+10.22 s and 14.9 s in three different places. Ratios built on three different
+baselines cannot be compared to each other. This run fixes that: **one
+container, one page cache, all five trainers, median of 3 repeats**
+(`modal run scripts/modal_benchmark.py::onesession`), 16-core x86-64 Linux /
+64 GiB, vocab 32000.
+
+**1 GB FineWeb**
+
+| trainer | pretokenizer | wall | peak RSS | vs gigatrain | parity |
+|---|---|---|---|---|---|
+| **gigatrain** | ByteLevel | **7.1 s** ±0% | **543 MB** | — | — |
+| gigatoken | its own | 24.9 s ±4% | 1.1 GB | 3.5x | — |
+| HuggingFace | ByteLevel | 46.7 s ±2% | 1.7 GB | 6.6x | **identical (31,798)** |
+| rustbpe | GPT-4 regex | 71.8 s ±4% | 1.1 GB | 10.1x | — |
+| SentencePiece | its own | 108.4 s ±1% | 3.6 GB | 15.3x | — |
+| **gigatrain** | whitespace | **21.0 s** ±2% | 1.1 GB | — | — |
+| HuggingFace | whitespace | 93.7 s ±3% | 4.3 GB | 4.5x | **identical (25,169)** |
+
+**100 MB FineWeb**
+
+| trainer | pretokenizer | wall | peak RSS | vs gigatrain | parity |
+|---|---|---|---|---|---|
+| **gigatrain** | ByteLevel | **1.5 s** ±7% | **153 MB** | — | — |
+| gigatoken | its own | 7.4 s ±1% | 242 MB | 4.9x | — |
+| rustbpe | GPT-4 regex | 9.0 s ±4% | 390 MB | 6.0x | — |
+| SentencePiece | its own | 15.2 s ±2% | 547 MB | 10.1x | — |
+| HuggingFace | ByteLevel | 16.1 s ±4% | 537 MB | 10.7x | **identical (31,801)** |
+| **gigatrain** | whitespace | **3.8 s** ±6% | 260 MB | — | — |
+| HuggingFace | whitespace | 27.6 s ±5% | 1.0 GB | 7.3x | **identical (29,299)** |
+
+**The like-for-like rows are the whitespace pairs**, where both sides run the
+same pretokenizer and the merge lists were diffed: 4.5x at 1 GB and 7.3x at
+100 MB, on ~3.9x less memory in both cases. The other trainers use their own
+pretokenizers and are time/memory comparisons only.
+
+**What this changes.** PRIOR_ART.md previously described rustbpe as "the closest
+competitor" at 5–7x in one section while quoting gigatoken at 1.8x in another —
+two claims that could not be ordered because they rested on different
+baselines. On one baseline the order is unambiguous: **gigatoken is the closest
+competitor at 3.5x, and rustbpe is not close at 10.1x.**
+
+This is not a correction of the earlier numbers in the strict sense — those
+were 10-core macOS and these are 16-core Linux, so the absolute figures are not
+expected to match. It is the first table in this repo whose *ratios* are
+internally consistent.
+
 ## Validation on 64-core Linux (Modal)
 
 Run with `modal run scripts/modal_benchmark.py --sizes 100,1000 --cpu 64`.
