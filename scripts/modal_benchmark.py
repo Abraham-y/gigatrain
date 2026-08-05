@@ -438,7 +438,11 @@ def thread_sweep(size_mb: int, vocab_size: int, threads: str, repeats: int):
         for tool in ("hf", "gigatrain"):
             if tool == "hf":
                 # tokenizers parallelises with rayon, which reads this.
-                cmd = (f"RAYON_NUM_THREADS={t} python3 /repo/scripts/hf_train_cli.py "
+                # `env` is required: _measure prefixes `/usr/bin/time -v`, so a
+                # bare VAR=x assignment would land after it and time would try
+                # to exec a binary literally named "RAYON_NUM_THREADS=1".
+                cmd = (f"env RAYON_NUM_THREADS={t} python3 "
+                       f"/repo/scripts/hf_train_cli.py "
                        f"--vocab-size {vocab_size} {corpus}")
             else:
                 cmd = (f"{gt} --vocab-size {vocab_size} --threads {t} {corpus}")

@@ -1,5 +1,14 @@
 # Degenerate corpora: what actually breaks a BPE trainer
 
+> **Update 2026-08-05 — the synthetic result below did not survive real data.**
+> Everything in this document up to the "Real corpora" section used generated
+> corpora. Rerun on real ones, the headline reversed: the `dna_oneline` case
+> reported here as an *irreducible* failure of BPE completes in 267 s on real
+> human chr21 with the same shape. Two causes, both mine: uniform-random `ACGT`
+> is harder than real genomic sequence, and the 180 s timeout was too short.
+> Read [Real corpora](#real-corpora-2026-08-05) before quoting anything above
+> it.
+
 Every benchmark in BENCHMARKS.md uses FineWeb — well-behaved English web text,
 the case nobody fails on. But the failure reports motivating this project are
 not merely *large*, they are *degenerate*:
@@ -76,7 +85,15 @@ ordinary work.
 configuration that fails is the one nobody ships — and it is the configuration
 #1313 used (`no pre-tokenizer`).
 
-## Finding 2: the one irreducible case
+## Finding 2: the one irreducible case — WITHDRAWN
+
+> **This finding is wrong.** Real genomic data of the same shape trains in
+> 267 s (see [Real corpora](#real-corpora-2026-08-05)). The conclusion was an
+> artifact of uniform-random synthetic bases plus a 180 s timeout. The
+> mechanism described below is real; the word "irreducible" is not. Corrected
+> claim: on a single very large pretoken, HuggingFace and gigatoken time out
+> where gigatrain and rustbpe do not — an implementation difference, not a
+> property of BPE. The original text is kept below unaltered.
 
 `dna_oneline` is 50 MB of `ACGT` with no whitespace and no newline. Both
 trainers time out in **both** modes, and that is correct behaviour rather than
@@ -188,3 +205,83 @@ python scripts/degenerate_corpora.py --out-dir /tmp/degen --size-mb 50
 python scripts/degenerate_benchmark.py --corpus-dir /tmp/degen \
     --vocab-size 32000 --timeout 180 --json-out results.json
 ```
+
+---
+
+# Real corpora (2026-08-05)
+
+The study above used generated corpora. Real degenerate data is different, and
+the difference reversed the headline. `scripts/real_corpora.py` builds these;
+every file is labelled REAL (published bytes, truncated) or DERIVED (a real
+corpus mechanically transformed, transformation named).
+
+45 MB each, vocab 32000, 16-core x86-64 Linux / 64 GiB, **median of 3 repeats**,
+900 s timeout, all five installed trainers.
+
+| corpus | mode | gigatrain | HF | gigatoken | rustbpe | SentencePiece |
+|---|---|---|---|---|---|---|
+| dna_real | ws | **14.3 s / 958 MB** | 81.1 s / 3.5 GB ✓ | — | — | — |
+| dna_real | bl | **13.7 s / 957 MB** | 73.9 s / 3.5 GB ✓ | 64.9 s / 1.8 GB | 28.9 s / 1.4 GB | 38.9 s / 2.0 GB |
+| dna_real_acgt_only | ws | **247 s / 755 MB** | TIMEOUT | — | — | — |
+| dna_real_acgt_only | bl | 251 s / 754 MB | TIMEOUT | TIMEOUT | **216 s / 808 MB** | rc=1 |
+| dna_real_oneline | ws | **268 s / 800 MB** | TIMEOUT | — | — | — |
+| dna_real_oneline | bl | 267 s / 800 MB | TIMEOUT | TIMEOUT | **236 s / 832 MB** | rc=1 |
+| json_real_oneline | ws | **28.1 s / 682 MB** | 92.7 s / 4.0 GB ✓ | — | — | — |
+| json_real_oneline | bl | **4.1 s / 234 MB** | 123.6 s / 4.4 GB ✓ | 14.3 s / 430 MB | 7.3 s / 615 MB | rc=1 |
+| minjs_real | ws | **7.6 s / 437 MB** | 99.9 s / 2.4 GB ✓ | — | — | — |
+| minjs_real | bl | **0.6 s / 175 MB** | 22.6 s / 3.6 GB ✓ | 4.8 s / 148 MB | 4.8 s / 374 MB | **SIGABRT** |
+| text_real_cjk | ws | **1.1 s / 101 MB** | 20.2 s / 447 MB ✓ | — | — | — |
+| text_real_cjk | bl | **1.0 s / 106 MB** | 22.3 s / 425 MB ✓ | 13.2 s / 211 MB | 3.9 s / 293 MB | 3.0 s / 210 MB |
+| text_real_cr_only | ws | **0.4 s / 93 MB** | 63.5 s / 3.1 GB ✓ | — | — | — |
+| text_real_cr_only | bl | **2.4 s / 72 MB** | 103.3 s / 4.1 GB ✓ | 6.1 s / 96 MB | 3.9 s / 97 MB | rc=1 |
+
+✓ = merge lists byte-identical to gigatrain. Non-gigatrain/HF trainers use their
+own pretokenizers, so they appear once and are time/memory comparisons only.
+
+**gigatrain completed all 14 configurations. HuggingFace completed 10, and was
+byte-identical on every one of them. SentencePiece failed 5 of 7.**
+
+## What real data changed
+
+**Real genomic data is not 4 symbols.** Human chr21 as UCSC publishes it has 10
+distinct characters — `ACGT`, soft-masked `acgt` marking repeat regions, and
+`N/n` — and **14.18% of it is `N`**, in multi-megabyte runs that BPE collapses
+almost immediately. Soft-masked regions are literally repeated sequence. The
+synthetic generator's uniform-random `ACGT` has none of that structure, which
+makes it the *hardest* possible input rather than a representative one.
+
+**The "irreducible failure" was not irreducible.** Synthetic `dna_oneline`
+timed out every trainer at 50 MB / 180 s, and this document originally
+concluded that a single large pretoken defeats BPE as a matter of algorithm.
+Real `dna_real_oneline` — one 46.7 MB line, no whitespace, no newline — trains
+in 267 s. Even `dna_real_acgt_only`, which is real bases uppercased with `N`
+stripped so it genuinely is 4 symbols in one 40 MB line, trains in 251 s.
+
+The corrected claim is narrower and still useful: **on a single very large
+pretoken, HuggingFace and gigatoken time out where gigatrain and rustbpe do
+not.** That is a statement about implementations, not about BPE.
+
+**The strongest results are on genuinely published files.** Single-line JSON
+(npm registry packuments, no whitespace anywhere) is 30x with byte-identical
+output on 19x less memory; minified JS from cdnjs is 37x; CR-only text is 43x
+on 57x less memory.
+
+## Measurement caveats
+
+- **Between-container variance dwarfs within-container repeats.** Modal
+  preempted the run partway and restarted it. The two attempts disagree by up
+  to **40%** on identical configurations (`dna_real` whitespace: 20.0 s then
+  14.3 s). The `±2%` spreads this harness reports are within-container and
+  capture none of that. No number here should be read to two significant
+  figures.
+- Sub-second gigatrain cells show `±55%`–`±75%` spread; that is timer noise at
+  that scale, not signal.
+- `text_real_cjk` is one Project Gutenberg book repeated 18x and `minjs_real`
+  cycles its 16 distinct bundles 2.5x, so both have inflated redundancy and
+  should not carry a claim.
+- SentencePiece's five failures are not one phenomenon: four are `rc=1`
+  (refusal — it declines when the corpus cannot support the requested vocab,
+  e.g. "Vocabulary size too high (2000). Please set it to a value <= 28") and
+  one is `SIGABRT`. Only the refusal has been characterised.
+- Timeouts are censored: `TIMEOUT` means "did not finish in 900 s", not a
+  finishing time and not a proof of non-termination.

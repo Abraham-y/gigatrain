@@ -80,9 +80,24 @@ those same-machine pairings.
 
 ### HuggingFace gets slower as you add cores
 
-The same 100 MB corpus, same HF version: **9.7 s on 10 cores, 181 s on 64**.
-At 1 GB, 61.2 s becomes 244.4 s. Its rayon-parallel pair counting reduces
-per-thread hash maps, so more cores means more merging work, not less.
+Measured under control — one box, one binary, one corpus, varying only
+`RAYON_NUM_THREADS` (64-core Linux, 100 MB, vocab 32k, median of 3):
+
+| threads | 1 | 4 | 16 | 32 | 64 |
+|---|---|---|---|---|---|
+| HF | 23.8 s | **15.4 s** | 17.9 s | 29.2 s | **158.6 s** |
+| gigatrain | 3.18 s | 2.86 s | 2.98 s | 2.86 s | 3.04 s |
+
+HF is U-shaped: **10.3x slower at 64 threads than at its own 4-thread
+optimum**, with peak RSS climbing 764 MB → 1215 MB. Its rayon-parallel pair
+counting reduces per-thread hash maps, so more cores means more merging work,
+not less. SentencePiece's maintainer measured the same strategy as
+ineffective-to-harmful independently
+([sentencepiece#366](https://github.com/google/sentencepiece/issues/366)).
+
+An earlier version of this section claimed 19x by comparing two different
+machines; that was retracted and replaced with the controlled measurement
+above.
 
 This is plausibly a contributing factor in
 [#1313](https://github.com/huggingface/tokenizers/issues/1313) — 13 GB on
@@ -91,14 +106,10 @@ reproduction of that issue, which used `vocab_size=512` on unsegmented data
 and was diagnosed in-thread by a maintainer as degenerate pretokenization; see
 the retraction in [BENCHMARKS.md](BENCHMARKS.md).
 
-**Caveat: this is not a controlled core-count sweep.** The two machines differ
-in ISA, OS and allocator as well as core count, and no HF thread scan has been
-run on a single box. Core count is the most likely cause and the mechanism is
-visible in HF's source, but the experiment that would prove it has not been
-run.
-
-gigatrain scales the other way on the 64-core box: 8.4 s at 1 thread to 4.7 s
-at 48, flat through 96.
+gigatrain scales the other way on the 64-core box: at 1 GB, 8.4 s at 1 thread
+to 4.7 s at 48, flat through 96. (Its flat line in the 100 MB table above is
+not evidence of good scaling — at that size the sequential phase 2 dominates,
+so phase-1 parallelism has little to show.)
 
 Full methodology, per-stage memory profiles, and the designs that were
 measured and rejected are in [BENCHMARKS.md](BENCHMARKS.md). Reproduce with

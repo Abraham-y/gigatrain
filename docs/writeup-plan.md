@@ -119,11 +119,11 @@ reader attacks.
   were diffed. Do not attach peak-RSS figures to it: no RSS was recorded for
   the 16-core runs. The 2.7 GB / 29.8 GB memory pair is from the **64-core**
   benchmark and belongs only in a sentence that says so.
-- **Do not claim "19x slower from more cores."** The 9.7 s and 181 s figures
-  come from different ISAs, OSes, allocators and machines. No HF core sweep on
-  a single box exists. If the anti-scaling point is made at all, it is "HF is
-  markedly slower on the bigger machine, and the mechanism is visible in its
-  source" — and someone will rightly ask for the controlled experiment.
+- **Claim 10.3x, never 19x.** The controlled sweep now exists (one box, one
+  binary, one corpus, only `RAYON_NUM_THREADS` varied): HF is U-shaped, 15.4 s
+  at 4 threads and 158.6 s at 64, i.e. 10.3x its own optimum. The old "19x"
+  came from comparing a 10-core mac to a 64-core Linux box and was retracted.
+  Lead with the controlled number — it is smaller and unattackable.
 - **Do not mention #1313 as explained, reproduced, or undiagnosed.** It is a
   `vocab_size=512` run on unsegmented DNA-like data, and a maintainer
   diagnosed it in-thread as degenerate pretokenization. Claiming it "was never
@@ -283,7 +283,7 @@ existed was archived in 2024.
 - Any claim of reproducing, explaining, or being first to diagnose #1313
 - "Three unrelated sources" for the scaling triangulation — they are different
   corpora, vocabularies and machines
-- "~19x slower with more cores" as a controlled result
+- "~19x slower with more cores" — superseded by the controlled 10.3x
 - Anything about the 198x naive-vs-incremental Python benchmark — a strawman
   nobody ships
 - Every quantitative claim from the retracted sweep

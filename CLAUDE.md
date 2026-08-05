@@ -25,12 +25,16 @@ this project does **not** reproduce it — the cause was degenerate
 pretokenization, as a maintainer diagnosed in the thread at the time. The live
 memory issues are #1795 and #1824.
 
-Separately, HF measured much slower on a 64-core Linux box than on a 10-core
-laptop (9.7 s → 181 s at 100 MB). The mechanism is visible in its source
-(rayon-parallel pair counting reduces per-thread hash maps). But **this is not
-a controlled core-count experiment** — ISA, OS, allocator and machine all
-differ — so it must not be quoted as "19x slower from more cores". Running an
-HF thread sweep on one box is an outstanding task.
+Separately, HF slows down badly with thread count. This was first claimed from
+9.7 s (10-core mac) against 181 s (64-core Linux), which varies ISA, OS,
+allocator and machine as well as cores; that "19x" was retracted as
+uncontrolled. **The controlled sweep has since been run** — one box, one
+binary, one corpus, varying only `RAYON_NUM_THREADS`
+(`modal_benchmark.py::threads`). HF is U-shaped: 23.8 s at 1 thread, 15.4 s at
+4 (its optimum), 29.2 s at 32, **158.6 s at 64** — i.e. **10.3x slower than its
+own optimum**, with peak RSS rising 764 MB → 1215 MB. gigatrain is flat.
+SentencePiece's maintainer independently measured HF-style parallel merging as
+ineffective-to-harmful (sentencepiece#366). Quote 10.3x, never 19x.
 
 Everything published in response is hobbyist-scale: blog posts reporting 2000x
 on a 114 MB Gutenberg corpus and 230x on TinyStories, plus a header-only C++

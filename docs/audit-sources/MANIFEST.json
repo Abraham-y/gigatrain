@@ -1,0 +1,231 @@
+{
+  "note": "Verbatim sources for docs/literature-audit.md. Re-check with: python scripts/fetch_audit_sources.py --verify",
+  "generated_utc": "2026-08-05T07:30:16+00:00",
+  "sources": [
+    {
+      "slug": "yttm-benchmark",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/VKCOM/YouTokenToMe/master/benchmark.md",
+      "file": "yttm-benchmark.md",
+      "bytes": 4770,
+      "sha256": "ff8f9e99ffa701c0ddfe12d0422afd2b2a99b7409e5f7c76609c78f48efd6569",
+      "retrieved_utc": "2026-08-05T07:28:13+00:00"
+    },
+    {
+      "slug": "yttm-readme",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/VKCOM/YouTokenToMe/master/README.md",
+      "file": "yttm-readme.md",
+      "bytes": 9343,
+      "sha256": "7908c18951c991b85357f4897d1a8e228c620d02585b55d31f573863f17035e8",
+      "retrieved_utc": "2026-08-05T07:28:13+00:00"
+    },
+    {
+      "slug": "rustbpe-readme",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/karpathy/rustbpe/master/README.md",
+      "file": "rustbpe-readme.md",
+      "bytes": 5223,
+      "sha256": "ac5e93646bce7c14c82bfc6b04ccfbe1291e9171103ca4e225a27a6b813e8d08",
+      "retrieved_utc": "2026-08-05T07:28:14+00:00"
+    },
+    {
+      "slug": "gigatoken-readme",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/marcelroed/gigatoken/main/README.md",
+      "file": "gigatoken-readme.md",
+      "bytes": 14648,
+      "sha256": "450249af07cf0a224a2c3b88668d8de2ba5b4a1cb317fa524139f9e9baa52f97",
+      "retrieved_utc": "2026-08-05T07:28:14+00:00"
+    },
+    {
+      "slug": "ffbpe-readme",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/tokn-ai/ffbpe/master/README.md",
+      "file": "ffbpe-readme.md",
+      "bytes": 12430,
+      "sha256": "2afcf2ab6f6678bce9fd04878fde4bb1c59a4bafb87edffd57e24d85c35f2fd9",
+      "retrieved_utc": "2026-08-05T07:28:14+00:00"
+    },
+    {
+      "slug": "ffbpe-benchmarks",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/tokn-ai/ffbpe/master/BENCHMARKS.md",
+      "file": "ffbpe-benchmarks.md",
+      "bytes": 5029,
+      "sha256": "22a33805d2f89d6f62448125c9848abffc37b9d5bf68d6a7eb97b641b34bb9e7",
+      "retrieved_utc": "2026-08-05T07:28:14+00:00"
+    },
+    {
+      "slug": "fastbytelevelgo-benchmarks",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/yunnian/fast-bytelevel-bpe-go/main/docs/benchmarks.md",
+      "file": "fastbytelevelgo-benchmarks.md",
+      "bytes": 975,
+      "sha256": "1bd3c2c6b3950c449cc0f06b4d79ea5e0552ed7cd0f77636d8bb1fa7ec688c6f",
+      "retrieved_utc": "2026-08-05T07:28:14+00:00"
+    },
+    {
+      "slug": "fastbytelevelgo-readme",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/yunnian/fast-bytelevel-bpe-go/main/README.md",
+      "file": "fastbytelevelgo-readme.md",
+      "bytes": 3246,
+      "sha256": "c3873680b11a86ed87cd8f1c56d75e82911a551f7569fb99d2b0f42cc216c86d",
+      "retrieved_utc": "2026-08-05T07:28:14+00:00"
+    },
+    {
+      "slug": "sentencepiece-readme",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/google/sentencepiece/master/README.md",
+      "file": "sentencepiece-readme.md",
+      "bytes": 8407,
+      "sha256": "d5b3b8f0b79151e24069dfc10f68b1441ab91853a04afe4cb993379efa7bd7d6",
+      "retrieved_utc": "2026-08-05T07:28:15+00:00"
+    },
+    {
+      "slug": "hf-tokenizers-readme",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/huggingface/tokenizers/main/README.md",
+      "file": "hf-tokenizers-readme.md",
+      "bytes": 3379,
+      "sha256": "3f468113e6783aa06593399ea4bae20321eb778a1be7ed028db33fc7228c3ef5",
+      "retrieved_utc": "2026-08-05T07:28:15+00:00"
+    },
+    {
+      "slug": "hf-bpe-trainer-src",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/huggingface/tokenizers/v0.22.2/tokenizers/src/models/bpe/trainer.rs",
+      "file": "hf-bpe-trainer-src.rs",
+      "bytes": 28175,
+      "sha256": "a1734fe3cbb8d204e6f9368a1f83f297d7d45413c636ad678b47215ae28fa739",
+      "retrieved_utc": "2026-08-05T07:28:15+00:00"
+    },
+    {
+      "slug": "hf-bpe-word-src",
+      "kind": "url",
+      "locator": "https://raw.githubusercontent.com/huggingface/tokenizers/v0.22.2/tokenizers/src/models/bpe/word.rs",
+      "file": "hf-bpe-word-src.rs",
+      "bytes": 11411,
+      "sha256": "42a5547426082590675979ed72e03ce59a16f7cf0b57aaac6890d43ce0a79ad0",
+      "retrieved_utc": "2026-08-05T07:28:15+00:00"
+    },
+    {
+      "slug": "reddy-scaling-abs",
+      "kind": "url",
+      "locator": "https://arxiv.org/abs/2502.20273",
+      "file": "reddy-scaling-abs.html",
+      "bytes": 42344,
+      "sha256": "c834b8add5e0dafba18ca904970fa36be4f53ac7c9e58d9662ff7e475445e935",
+      "retrieved_utc": "2026-08-05T07:28:15+00:00"
+    },
+    {
+      "slug": "zouhar-formal-bpe-abs",
+      "kind": "url",
+      "locator": "https://arxiv.org/abs/2306.16837",
+      "file": "zouhar-formal-bpe-abs.html",
+      "bytes": 42262,
+      "sha256": "ad7a52d68ab4204c69328912ed381b311284abfc6ef9af16de705be01dfcf014",
+      "retrieved_utc": "2026-08-05T07:28:15+00:00"
+    },
+    {
+      "slug": "sennrich-bpe-abs",
+      "kind": "url",
+      "locator": "https://arxiv.org/abs/1508.07909",
+      "file": "sennrich-bpe-abs.html",
+      "bytes": 42267,
+      "sha256": "4029485d01406331044f5f46a4e84168d90a5d46d29ead22f66a9d1b3060b39d",
+      "retrieved_utc": "2026-08-05T07:28:15+00:00"
+    },
+    {
+      "slug": "hf-issue-1313",
+      "kind": "gh",
+      "locator": "huggingface/tokenizers/issues/1313",
+      "file": "hf-issue-1313.json",
+      "bytes": 38612,
+      "sha256": "d2b8d6f6092c024a8db775a431410e7baff3b02a2f577ca494c05487f71740fe",
+      "retrieved_utc": "2026-08-05T07:28:37+00:00"
+    },
+    {
+      "slug": "hf-issue-1681",
+      "kind": "gh",
+      "locator": "huggingface/tokenizers/issues/1681",
+      "file": "hf-issue-1681.json",
+      "bytes": 29943,
+      "sha256": "b681440e8bbcfc0b3a1016d13965ec50d58c5a3523851f70de7d01a960ce821b",
+      "retrieved_utc": "2026-08-05T07:28:42+00:00"
+    },
+    {
+      "slug": "hf-issue-1795",
+      "kind": "gh",
+      "locator": "huggingface/tokenizers/issues/1795",
+      "file": "hf-issue-1795.json",
+      "bytes": 6063,
+      "sha256": "419df941a9f57530bd7111bf9ec026805a4360e84ac966ce78c5d998a5880d91",
+      "retrieved_utc": "2026-08-05T07:28:56+00:00"
+    },
+    {
+      "slug": "hf-issue-1824",
+      "kind": "gh",
+      "locator": "huggingface/tokenizers/issues/1824",
+      "file": "hf-issue-1824.json",
+      "bytes": 20025,
+      "sha256": "3b2e459a59ba028c9933d18adc6ab01f741c9121b649c860204999a3236ae018",
+      "retrieved_utc": "2026-08-05T07:29:18+00:00"
+    },
+    {
+      "slug": "hf-issue-1794",
+      "kind": "gh",
+      "locator": "huggingface/tokenizers/issues/1794",
+      "file": "hf-issue-1794.json",
+      "bytes": 8613,
+      "sha256": "b60df86f15694964a7d01ada44dd7b9f6146ba41044476f4675afbc5d030da03",
+      "retrieved_utc": "2026-08-05T07:29:26+00:00"
+    },
+    {
+      "slug": "hf-issue-2058",
+      "kind": "gh",
+      "locator": "huggingface/tokenizers/issues/2058",
+      "file": "hf-issue-2058.json",
+      "bytes": 9154,
+      "sha256": "27f6dfb764e3d99bad79306be5e3178bd3b07bd75576e2e0c49d5615f1359551",
+      "retrieved_utc": "2026-08-05T07:29:30+00:00"
+    },
+    {
+      "slug": "hf-pr-2066",
+      "kind": "gh",
+      "locator": "huggingface/tokenizers/pulls/2066",
+      "file": "hf-pr-2066.json",
+      "bytes": 22157,
+      "sha256": "c04adb4dc5dfa4fe9b3a8a6bdb050dc88696f982ddc5ac0a3741d83b699f4935",
+      "retrieved_utc": "2026-08-05T07:29:37+00:00"
+    },
+    {
+      "slug": "sp-issue-366",
+      "kind": "gh",
+      "locator": "google/sentencepiece/issues/366",
+      "file": "sp-issue-366.json",
+      "bytes": 30092,
+      "sha256": "92b017defd5a71193729860356f96a131a8227442a9ebdb0564d2a5da0eb9779",
+      "retrieved_utc": "2026-08-05T07:29:52+00:00"
+    },
+    {
+      "slug": "sp-issue-862",
+      "kind": "gh",
+      "locator": "google/sentencepiece/issues/862",
+      "file": "sp-issue-862.json",
+      "bytes": 8751,
+      "sha256": "956db5535c90ffe5918c9ccefdaf2abe757467669e088e1f12ef70190f5e0d04",
+      "retrieved_utc": "2026-08-05T07:30:07+00:00"
+    },
+    {
+      "slug": "sp-issue-1021",
+      "kind": "gh",
+      "locator": "google/sentencepiece/issues/1021",
+      "file": "sp-issue-1021.json",
+      "bytes": 8921,
+      "sha256": "1ad3a687200a3088e984658361576a9d5d486f771950ae43e6a36180d5d70f7a",
+      "retrieved_utc": "2026-08-05T07:30:16+00:00"
+    }
+  ]
+}

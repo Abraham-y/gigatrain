@@ -277,19 +277,36 @@ Two things this settles.
 **The advantage is not an Apple Silicon artifact.** The ratios hold or widen
 on x86-64 Linux: rustbpe 9.5x -> 11.9x at 1 GB, SentencePiece 13x -> 15.2x.
 
-**HuggingFace appears to degrade with core count.** On the 10-core laptop HF
-took 9.7 s on 100 MB; on the 64-core box it took **181 s**. At 1 GB it went
-61.2 s -> 244.4 s. The mechanism is visible in the source: HF's rayon-parallel
-pair counting reduces per-thread hash maps, so more cores means more merging
-work, not less.
+**HuggingFace degrades with core count — now measured under control.**
 
-**This is not a controlled core-count sweep, and should not be quoted as
-"19x slower from more cores".** The two measurements differ in ISA (ARM vs
-x86-64), OS (macOS vs Linux), allocator (libmalloc vs glibc) and machine, not
-only in core count. `modal_benchmark.py`'s thread scan varies threads on
-gigatrain only; no equivalent HF sweep on one box has been run. Until it is,
-the defensible statement is that HF is slower on the bigger machine, with core
-count the most likely cause.
+The claim used to rest on 9.7 s (10-core macOS) against 181 s (64-core Linux),
+which varies ISA, OS, allocator and machine as well as core count. That was
+retracted as uncontrolled. `modal_benchmark.py::threads` runs the experiment
+properly: **one box, one binary, one corpus, varying only `RAYON_NUM_THREADS`**
+(64-core x86-64 Linux, 100 MB FineWeb, vocab 32000, median of 3):
+
+| threads | HF | peak RSS | gigatrain |
+|---|---|---|---|
+| 1 | 23.8 s | 764 MB | 3.18 s |
+| 2 | 18.6 s | 781 MB | 3.04 s |
+| 4 | **15.4 s** | 827 MB | 2.86 s |
+| 8 | 16.0 s | 888 MB | 2.66 s |
+| 16 | 17.9 s | 930 MB | 2.98 s |
+| 32 | 29.2 s | 1064 MB | 2.86 s |
+| 64 | **158.6 s** | 1215 MB | 3.04 s |
+
+HF is U-shaped with a minimum at 4 threads. At 64 it is **10.3x slower than its
+own optimum** and 6.7x slower than single-threaded, while peak RSS rises
+monotonically 764 MB -> 1215 MB. gigatrain is flat within noise.
+
+So the effect is real and the mechanism (rayon-parallel pair counting reducing
+per-thread hash maps) is visible in the source — but **the honest magnitude is
+10.3x against its own optimum, not the "19x" this file once claimed.** The
+retracted number was inflated by the confounds.
+
+gigatrain being flat here is not evidence of good scaling: at 100 MB the
+sequential phase 2 dominates, so phase-1 parallelism has little to show. The
+scaling result for gigatrain is the 1 GB thread scan further down.
 
 This is also **not** a reproduction of issue #1313 — see
 [the retraction above](#a-retraction-this-is-not-hf-issue-1313). #1313 is a
