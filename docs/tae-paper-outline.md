@@ -126,15 +126,35 @@ provisional.
 
 ### 5. Failure III — variance that is measured in the wrong place (~1 p)
 
-Within-container spread across 3 repeats: **±2%**. Between-container spread on
-identical configurations, after a cloud preemption forced a restart: **~40%**
-(`dna_real` whitespace, 20.0 s then 14.3 s).
+**The measurement.** One fixed configuration (100 MB FineWeb, ByteLevel, vocab
+32k), run on **8 freshly allocated cloud containers**, allocation identity
+verified per probe via `/proc/sys/kernel/random/boot_id` and `MODAL_TASK_ID`
+(8 distinct values, all ~1 s uptime):
+
+| | within-run spread (3 repeats) | across 8 allocations |
+|---|---|---|
+| gigatrain | ±2% | **20%** (1.19 → 1.46 s) |
+| HuggingFace | ±2% | **28%** (16.82 → 21.99 s) |
 
 Repeats *inside* one allocation measure scheduler jitter, not reproducibility.
-0 of 6 published benchmarks report timing variance of either kind; our own
+The between-allocation figure is roughly an order of magnitude larger, and it
+is the one that matters when a reader tries to reproduce a published ratio.
+0 of 6 published benchmarks report timing variance of either kind; ours
 reported none until 2026-08.
 
-**Detection practice.** Repeat across allocations, not within; report the
+**This section should narrate its own three estimates**, because they make the
+point better than the final number does:
+1. **40%** — from n=2, an accidental preemption that restarted a run.
+2. **29%** — from n=8, but with a broken identifier (`gethostname()` returns
+   `modal` for every sandbox), so the allocations were never shown to differ.
+3. **20–28%** — from n=8 with verified distinct allocations.
+
+The finding survived all three; the number did not. An author who stopped at
+step 1 or 2 would have published a figure that is wrong by up to 2x and an
+attribution ("between-container") that was unsupported.
+
+**Detection practice.** Repeat across allocations, not within; verify that the
+allocations actually differ rather than assuming it; report the
 between-allocation figure; refuse to quote two significant figures without it.
 
 ### 6. Failure IV — censored data rendered as results (~0.5 p)

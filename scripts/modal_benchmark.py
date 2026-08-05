@@ -543,3 +543,113 @@ def onesession(sizes: str = "100,1000", vocab_size: int = 32000,
         rss = f"{r['rss']/(1<<20):.0f}MB" if r.get("rss", -1) > 0 else "—"
         print(f"  {r['corpus']:<22} {r['mode']:<10} {r['trainer']:<14} "
               f"{med:>9} {rss:>9} {r['status']:>9}  {r['parity']}")
+
+
+@app.function(volumes={DATA: volume}, timeout=24 * 3600)
+def inversion(size_mb: int, vocab_size: int, timeout: int, repeats: int):
+    """Matched synthetic/real corpus pairs, ONE container, ONE timeout.
+
+    The synthetic-vs-real inversion was first observed across two runs that
+    differed in machine (laptop vs Modal) AND timeout (180 s vs 900 s) as well
+    as in corpus. That is an uncontrolled comparison, which is the very thing
+    the write-up criticises. This runs both arms side by side.
+    """
+    import os
+
+    os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
+    _sh("uname -a"); _sh("nproc")
+    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+
+    d = f"/tmp/inversion_{size_mb}"
+    os.makedirs(d, exist_ok=True)
+    # Matched pairs: same nominal data type, synthetic vs real.
+    _sh(f"python3 /repo/scripts/degenerate_corpora.py --out-dir {d} "
+        f"--size-mb {size_mb} --only dna_oneline --only json_oneline "
+        f"--only minified_js --only cjk_dense --only cr_only", check=True)
+    _sh(f"python3 /repo/scripts/real_corpora.py --out-dir {d} "
+        f"--cache-dir {DATA}/real_cache --size-mb {size_mb} "
+        f"--only dna_real_oneline --only json_real_oneline --only minjs_real "
+        f"--only text_real_cjk --only text_real_cr_only", check=True)
+    volume.commit()
+    _sh(f"ls -la {d}")
+
+    out = "/tmp/inversion.json"
+    _sh(f"python3 /repo/scripts/degenerate_benchmark.py --corpus-dir {d} "
+        f"--vocab-size {vocab_size} --timeout {timeout} --repeats {repeats} "
+        f"--trainers gigatrain,HF --json-out {out}")
+    import json as _json
+    try:
+        with open(out) as f:
+            return _json.load(f)
+    except OSError:
+        return []
+
+
+@app.function(volumes={DATA: volume}, timeout=6 * 3600)
+def _one_variance_probe(idx: int):
+    """Measure one fixed configuration once. Called N times in parallel so the
+    calls land on different container allocations."""
+    import os
+
+    os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
+    # Every Modal sandbox reports the hostname "modal", so gethostname() cannot
+    # distinguish allocations. boot_id is per kernel instance and MODAL_TASK_ID
+    # is per task; together they identify the allocation properly.
+    try:
+        boot_id = open("/proc/sys/kernel/random/boot_id").read().strip()
+    except OSError:
+        boot_id = "?"
+    uptime = open("/proc/uptime").read().split()[0] if os.path.exists("/proc/uptime") else "?"
+    ident = f"{boot_id[:8]}/{os.environ.get('MODAL_TASK_ID', '?')[-8:]}"
+    print(f"probe {idx}: boot_id={boot_id} task={os.environ.get('MODAL_TASK_ID')} "
+          f"uptime={uptime}s", flush=True)
+    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+    _prepare_corpora([100])
+    corpus = f"{DATA}/fineweb_100mb.txt"
+    _sh(f"cat {corpus} > /dev/null")
+    gt = "/repo/gigatrain/target/release/gigatrain"
+    rows = []
+    for tool, cmd in (
+        ("gigatrain", f"{gt} --vocab-size 32000 --pretokenizer bytelevel {corpus}"),
+        ("hf", f"python3 /repo/scripts/hf_train_cli.py --vocab-size 32000 "
+               f"--pretokenizer bytelevel {corpus}"),
+    ):
+        secs, peak_mb, rc = _measure(f"{tool} probe{idx}", 100, cmd)
+        rows.append({"probe": idx, "host": ident, "uptime_s": uptime, "tool": tool,
+                     "seconds": round(secs, 2), "peak_mb": round(peak_mb), "rc": rc})
+    return rows
+
+
+@app.local_entrypoint()
+def inversion_run(size_mb: int = 45, vocab_size: int = 32000,
+                  timeout: int = 1800, repeats: int = 3,
+                  cpu: int = 16, memory: int = 64):
+    """Controlled synthetic-vs-real comparison."""
+    rows = inversion.with_options(cpu=cpu, memory=memory * 1024).remote(
+        size_mb, vocab_size, timeout, repeats)
+    print("\n============ SYNTHETIC vs REAL (one container, one timeout) ============")
+    for r in rows:
+        med = (f"{r['median_wall']:.1f}s" if r.get("median_wall")
+               else f">{r['timeout_s']}s" if r.get("status") == "TIMEOUT" else "—")
+        print(f"  {r['corpus']:<26} {r['mode']:<10} {r['trainer']:<10} "
+              f"{med:>9} {r['status']:>9}  {r['parity']}")
+
+
+@app.local_entrypoint()
+def variance(n: int = 8, cpu: int = 16, memory: int = 64):
+    """Between-container variance: same config on N fresh allocations."""
+    import statistics
+    out = list(_one_variance_probe.with_options(
+        cpu=cpu, memory=memory * 1024).map(range(n)))
+    flat = [r for rows in out for r in rows]
+    print("\n============ BETWEEN-CONTAINER VARIANCE ============")
+    for tool in ("gigatrain", "hf"):
+        xs = [r["seconds"] for r in flat if r["tool"] == tool and r["rc"] == 0]
+        hosts = {r["host"] for r in flat if r["tool"] == tool}
+        if not xs:
+            print(f"  {tool}: no successful runs"); continue
+        med = statistics.median(xs)
+        print(f"  {tool:<10} n={len(xs)} distinct_allocations={len(hosts)} "
+              f"min={min(xs):.2f}s med={med:.2f}s max={max(xs):.2f}s "
+              f"spread={100*(max(xs)-min(xs))/med:.0f}% of median")
+        print(f"             raw: {sorted(xs)}")
