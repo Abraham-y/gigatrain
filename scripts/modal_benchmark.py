@@ -36,9 +36,16 @@ image = (
         # The closest competitor (~1.8x). Omitting it from a comparison table
         # reads as cherry-picking whether or not it is.
         "gigatoken",
+        "ffbpe",
         "pyarrow",
         "maturin",
     )
+    # YouTokenToMe is archived and ships no wheel past cp38, but its sdist
+    # builds given Cython. Included because PRIOR_ART.md audits its benchmark,
+    # and auditing a tool without ever running it is the defect that audit is
+    # about.
+    .pip_install("Cython", "setuptools", "wheel")
+    .run_commands("pip install --no-build-isolation youtokentome")
     # Source is added last so code edits do not invalidate the heavy layers.
     .add_local_dir(
         ".",

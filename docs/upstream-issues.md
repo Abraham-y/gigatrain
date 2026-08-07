@@ -1,9 +1,10 @@
 # Upstream: what to file, and what not to
 
-## 1. FILE THIS — negative pair counts produce a phantom merge
+## 1. FILED — negative pair counts produce a phantom merge
 
-**Not reported anywhere.** The single novel finding in this project, verified
-against HuggingFace over 200 runs.
+**[huggingface/tokenizers#2320](https://github.com/huggingface/tokenizers/issues/2320)**,
+filed 2026-08-07. Verified against **0.23.1** (the current release), not just
+the 0.22.2 this repo pins.
 
 PARITY.md documents the *positive* `i32` overflow (>2^31 occurrences of one
 pair ⇒ HF emits fewer merges). The opposite sign is reachable at **8 words /
@@ -29,11 +30,22 @@ corpus: '##c ##cac# #ab c# #### accc#a#a#b a cb'
   --special a --special '<unk>'
 ```
 
-15 merges, with the phantom `('##c','##a')` at index 11. Verified against HF
-over 200 runs: HF produced 8 distinct outputs (decorated-mode nondeterminism),
-and the **13 runs that landed on our token ordering matched exactly**, phantom
-included. Only `max_token_length` 4 triggers it on this corpus; 2, 3, 5, 6, 8,
-100 and unset do not.
+The filed reproducer is **pure HuggingFace** — it needs no gigatrain. It
+trains, then replays the emitted merge list against the corpus and reports the
+true occurrence count of each pair at the moment it is merged; a count of 0
+means the merge was unreachable. On 0.23.1, 4 of 40 runs contain one (training
+is nondeterministic under `##`, so it appears in a subset).
+
+`max_token_length` is required, and which value triggers it is corpus-specific:
+30 runs each at 2, 3, 4, 5, 6, 8, 100 and unset gave **6/30 at 4 and 0/30
+everywhere else**.
+
+**The precise defect**, confirmed against the archived v0.22.2 source: both
+`queue.push` sites guard `if count > 0`, but the staleness re-check does not —
+`top.count = pair_counts[&top.pair] as u64` re-pushes an entry whose count has
+since gone negative, sign-extended to `u64::MAX`, and `top.count < 1` cannot
+catch it. Widening the counter to `i64` (as #2058 proposes for the positive
+direction) would not fix this; any negative value sign-extends the same way.
 
 gigatrain reproduces this deliberately — `live as u64` on an `i64` sign-extends
 identically — because parity means matching the bugs too.

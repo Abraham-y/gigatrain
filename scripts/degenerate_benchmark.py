@@ -162,6 +162,11 @@ def build_jobs(corpus, mode, args, py):
             ("sentencepiece", [py, str(SCRIPTS / "sp_train_cli.py"),
                                "--vocab-size", str(args.vocab_size),
                                "--model-prefix", "/tmp/sp_degen", str(corpus)], False),
+            ("ffbpe", [py, str(SCRIPTS / "ffbpe_train_cli.py"),
+                       "--vocab-size", str(args.vocab_size), str(corpus)], False),
+            ("youtokentome", [py, str(SCRIPTS / "yttm_train_cli.py"),
+                              "--vocab-size", str(args.vocab_size),
+                              "--model-prefix", "/tmp/yttm_bench", str(corpus)], False),
         ]
     return jobs
 
