@@ -653,3 +653,69 @@ def variance(n: int = 8, cpu: int = 16, memory: int = 64):
               f"min={min(xs):.2f}s med={med:.2f}s max={max(xs):.2f}s "
               f"spread={100*(max(xs)-min(xs))/med:.0f}% of median")
         print(f"             raw: {sorted(xs)}")
+
+
+@app.function(volumes={DATA: volume}, timeout=12 * 3600)
+def boundary(size_mb: int, vocab_size: int, timeout: int, repeats: int):
+    """Boundary-free input vs the same bytes with newlines, ONE container.
+
+    This was first measured on a laptop, in two separate invocations minutes
+    apart, on a machine that turned out to be running an unrelated training job
+    (load average 4.4 on 10 cores). Both arms therefore had unknown and
+    possibly different background load, which is the same uncontrolled
+    comparison this repo criticises elsewhere. Re-measured side by side on an
+    isolated container.
+    """
+    import os
+
+    os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
+    _sh("uname -a"); _sh("nproc"); _sh("uptime")
+    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+
+    d = f"/tmp/boundary_{size_mb}"
+    os.makedirs(d, exist_ok=True)
+    src = f"{d}/src.txt"
+    if not os.path.exists(src):
+        _sh(f"python3 /repo/scripts/degenerate_corpora.py --out-dir {d} "
+            f"--size-mb {size_mb} --only json_oneline", check=True)
+        os.rename(f"{d}/json_oneline_{size_mb}mb.txt", src)
+    # Arm A: no cut points at all. Arm B: identical bytes, newline every 1000.
+    a, b = f"{d}/nocut_{size_mb}mb.txt", f"{d}/withnl_{size_mb}mb.txt"
+    if not os.path.exists(a):
+        os.link(src, a)
+    if not os.path.exists(b):
+        with open(src, "rb") as f, open(b, "wb") as g:
+            while True:
+                chunk = f.read(1000)
+                if not chunk:
+                    break
+                g.write(chunk); g.write(b"\n")
+    _sh(f"ls -la {d}")
+    for p in (a, b):
+        _sh(f"cat {p} > /dev/null")
+
+    out = "/tmp/boundary.json"
+    _sh(f"python3 /repo/scripts/degenerate_benchmark.py --corpus-dir {d} "
+        f"--vocab-size {vocab_size} --timeout {timeout} --repeats {repeats} "
+        f"--trainers gigatrain --only nocut --only withnl --json-out {out}")
+    import json as _json
+    try:
+        with open(out) as f:
+            return _json.load(f)
+    except OSError:
+        return []
+
+
+@app.local_entrypoint()
+def boundary_run(size_mb: int = 2000, vocab_size: int = 32000,
+                 timeout: int = 3600, repeats: int = 3,
+                 cpu: int = 16, memory: int = 64):
+    """Boundary-free vs newline-delimited, same bytes, one container."""
+    rows = boundary.with_options(cpu=cpu, memory=memory * 1024).remote(
+        size_mb, vocab_size, timeout, repeats)
+    print("\n======= BOUNDARY-FREE vs NEWLINE-DELIMITED (same bytes) =======")
+    for r in rows:
+        med = (f"{r['median_wall']:.1f}s" if r.get("median_wall")
+               else f">{r['timeout_s']}s" if r.get("status") == "TIMEOUT" else "—")
+        rss = f"{r['rss']/(1<<20):.0f}MB" if r.get("rss", -1) > 0 else "—"
+        print(f"  {r['corpus']:<22} {r['mode']:<10} {med:>9} {rss:>9} {r['status']:>9}")

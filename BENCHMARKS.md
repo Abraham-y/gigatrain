@@ -1,234 +1,56 @@
 # Benchmarks
 
-Harnesses: `scripts/benchmark.py` (gigatrain vs HF, reports wall time, peak
-RSS and merge-list parity together), `scripts/modal_benchmark.py` (all
-trainers on a rented many-core Linux box), and per-trainer CLIs under
-`scripts/` for rustbpe, SentencePiece, gigatoken and ffbpe. Only
-`benchmark.py` verifies parity; the multi-trainer runs discard stdout and
-measure time and memory only.
+Every measurement in one place. **Superseded numbers are not kept here** — they
+are in [docs/CORRECTIONS.md](docs/CORRECTIONS.md) with the reason they moved.
 
-**A speedup with different output is not a speedup.** Where a row compares
-different pretokenizers, or a trainer that does not produce an HF-compatible
-merge list, it is labelled as such and is a time/memory comparison only.
-Corpus: FineWeb sample-10BT slices (real web text), whitespace pretokenization,
-vocab 32000, one special token.
+Harnesses: `scripts/benchmark.py` (local, parity-checking),
+`scripts/modal_benchmark.py` (all runs below), `scripts/degenerate_benchmark.py`
+(repeats, variance, failure-tolerant), `scripts/real_corpora.py` and
+`scripts/degenerate_corpora.py` (corpora).
 
-Machine: Apple M-series Mac, 10 cores, 34 GB RAM, macOS 25.5.
-Baseline: `tokenizers` 0.22.2 (Python), rayon across all 10 cores.
+**A speedup with different output is not a speedup.** Rows where the two sides
+run different pretokenizers are time/memory comparisons only and are marked.
 
-## Current results (2026-07-30)
+---
 
-**Whitespace pretokenization**
+## Which numbers to quote
 
-| corpus | trainer | wall | peak RSS | speedup | parity |
-|---|---|---|---|---|---|
-| 100 MB | gigatrain | 1.7 s | 419 MB | 5.8x | IDENTICAL |
-| 100 MB | HF BpeTrainer | 9.7 s | 1.0 GB | | |
-| 1 GB | gigatrain | 9.4 s | 1.3 GB | 6.5x | IDENTICAL |
-| 1 GB | HF BpeTrainer | 61.2 s | 4.7 GB | | |
-
-**ByteLevel (GPT-2 regex) — the production configuration**
-
-| corpus | trainer | wall | peak RSS | speedup | parity |
-|---|---|---|---|---|---|
-| 100 MB | gigatrain | 1.2 s | 224 MB | — | IDENTICAL |
-| 1 GB | gigatrain | 8.5 s | 725 MB | — | IDENTICAL |
-| 12.9 GB | gigatrain | **85 s** | **2.2 GB** | — | — |
-
-No HF ByteLevel figure was ever measured on this laptop, so the speedup column
-is empty. (A previous version of this table carried a "~50x" against an HF
-ByteLevel time of 61.2 s at 100 MB. That number was the 1 GB *whitespace* row
-copied one table up; it was never measured. The only real HF ByteLevel timing
-in this repo is 257.1 s at 12.9 GB / 16 cores — see
-[Parity verified at 12.9 GB](#parity-verified-at-129-gb) — where HF's ByteLevel
-run is ~1.9x *faster* than its whitespace run, which is the opposite of what
-the retracted 100 MB row implied.)
-
-ByteLevel favours gigatrain more than whitespace does: HF pays for a regex
-engine per document, while this is a hand-written state machine. It also
-produces far fewer unique pretokens (1.6M vs 4.1M at 1 GB) because
-punctuation splits, which shrinks phase 2 substantially.
-
-At 12.9 GB / ByteLevel: phase 1 70.6 s, phase 2 14.8 s, 8.96M unique
-pretokens. Whitespace on the same file: 85.7 s total, 6.4 GB peak, 27.4M
-unique pretokens.
-
-### Phase 1 became the bottleneck, and was optimized twice
-
-Once ByteLevel landed, the profile inverted: phase 1 was 85% of the 12.9 GB
-run (88.9 s of 104 s), not the merge loop. Two fixes, both verified against
-the full BMP parity sweep:
-
-| change | phase 1 @ 100 MB | why |
+| claim | number | where |
 |---|---|---|
-| baseline | 1.06–1.21 s | |
-| ASCII lookup for `\p{L}`/`\p{N}` | 0.67–0.86 s | a binary search over ~700 ranges ran per character, ~13 billion times on the 13 GB corpus |
-| defer byte-to-unicode mapping | 0.45–0.48 s | the map is a bijection, so pieces can be counted raw and mapped only for the ~9M unique words instead of every occurrence |
+| **Headline** — same pretokenizer, verified identical output | 12.9 GB in **38.0 s** vs HF **257.1 s** (**6.8x**), 31,790 merges identical | [Parity at scale](#parity-at-scale) |
+| Memory at scale | 19.4 GB in **2.9 GB** RAM vs HF **36.3 GB** | [19.4 GB](#194-gb-milestone-5-and-issue-1681) |
+| Comparable multi-trainer ratios | gigatoken 3.5x · HF 6.6x · rustbpe 10.1x · SentencePiece 15.3x | [One-session](#one-session-comparison) |
+| HF thread pathology | **2.4x** at 1 GB (1.34x at 36 threads); 10.3x at 100 MB | [Core-count sweep](#controlled-core-count-sweep) |
+| Measurement noise | **20–28%** between allocations, ±2% within | [Variance](#between-allocation-variance) |
 
-Together ~2.4x on phase 1 **at 100 MB**. The effect is much smaller at scale:
-at 12.9 GB phase 1 went 88.9 s → 70.6 s (**1.26x**), taking the whole run from
-104 s to **85 s** and peak RSS from 2.4 GB to 2.2 GB. The 100 MB run is
-dominated by the per-character work these two changes remove; the 12.9 GB run
-is dominated by I/O and hash-map inserts, which they do not touch.
+**Do not claim "fastest BPE trainer."** rustbpe is ~15% faster on
+single-giant-pretoken corpora, and ffbpe and YouTokenToMe have never been run
+in the comparable table.
 
-### The HF baseline at 12.9 GB
+---
 
-**HuggingFace did not finish.** Killed by a 60-minute watchdog, having spent
-the run between 4 and 8 GB RSS while the machine held 12.5 GB of swap. This
-is the #1681 failure mode (memory, not merge-loop time) on a 34 GB laptop.
+## Parity at scale
 
-It is not a clean speedup number and should not be quoted as one: a
-swap-bound wall time measures this machine's SSD. What it does establish is
-that the same corpus that gigatrain trains in under two minutes inside RAM
-drives HF into an hour of thrashing on identical hardware.
-
-### Against SentencePiece v0.2.2
-
-SentencePiece shipped a lazy-priority-queue BPE optimization in v0.2.2
-(2026-07-12) with a claimed 20x, so it is the current baseline to beat rather
-than the older published numbers. Measured here, vocab 32000, same machine,
-with `--max_sentence_length` raised from its 4192-byte default (which
-silently drops most FineWeb documents) and `train_extremely_large_corpus`:
-
-All 10-core macOS, whitespace for gigatrain and HF:
-
-| corpus | SentencePiece v0.2.2 | HF 0.22.2 | gigatrain |
-|---|---|---|---|
-| 100 MB | 13.7 s / 539 MB | 9.7 s / 1.0 GB | 1.7 s / 419 MB |
-| 1 GB | 112.7 s / 3.0 GB | 61.2 s / 4.7 GB | 9.4 s / 1.3 GB |
-
-SentencePiece measured 112.7 s at 1 GB on *both* this laptop and the 64-core
-Linux box. Its BPE trainer is single-threaded, so both machines do the same
-one-core work; peak RSS differs (3.0 vs 3.6 GB), confirming these are separate
-runs rather than a transcription error.
-
-The 20x was against older SentencePiece, not the field: post-optimization it
-is still ~2x slower than HuggingFace at these sizes, and ~12x slower than
-gigatrain. It is more memory-efficient than HF, though not than gigatrain.
-User time barely exceeds wall time (17.2 s vs 14.0 s at 100 MB), consistent
-with its maintainer's statement that BPE training is single-threaded.
-
-This is a speed and memory comparison only. SentencePiece BPE produces a
-different tokenizer by design — normalization, a character-coverage alphabet,
-U+2581 word prefixes, and pieces rather than a merge list — so no
-merge-for-merge diff is possible.
-
-### Measurement noise
-
-Numbers taken after the HF run were affected by 12 GB of swap that macOS had
-not reclaimed: the same 1 GB whitespace configuration measured 9.4 s / 1.3 GB
-on a quiet machine and 11.3–19.4 s / 0.7–0.9 GB while swap was occupied
-(slower wall, and lower RSS because the allocator behaves differently under
-pressure). Treat single measurements on a loaded machine as indicative only.
-
-## A retraction: this is not HF issue #1313
-
-An earlier version of this file claimed the 12.9 GB run reproduced
-[tokenizers #1313](https://github.com/huggingface/tokenizers/issues/1313).
-It does not. That issue used `vocab_size=512` on ~13 billion characters of
-unsegmented DNA-like data, so its merge loop runs only a couple of hundred
-merges and the reported 10+ hours came from degenerate pretokenization, not
-merge cost. A 32k-vocab FineWeb run is a different and far merge-heavier
-workload.
-
-The genuinely unanswered scale issues are the memory ones: #1681 (20 GB OOM
-on 1.5–2 TB machines), #1795, #1824.
-
-## Progression (1 GB corpus)
-
-| stage | wall | peak RSS |
-|---|---|---|
-| milestone 3 (single-threaded, std HashMap) | 39.3 s | 3.4 GB |
-| milestone 4 (parallel phase 1, FxHash, Vec pos) | 15.3 s | 2.4 GB |
-| milestone 5 (arena layout, sharded shuffle) | 11.1 s | 1.4 GB |
-| + token_chars table (4-byte symbols) | 9.4 s | 1.3 GB |
-
-Phase 2 breakdown at 1 GB after the last step: alphabet 126 ms, tokenize
-198 ms, initial pair count 338 ms, merge loop 7.06 s. The merge loop is now
-~90% of phase 2 and ~75% of total runtime; it is sequential by construction,
-so it is the ceiling on further gains. A sampling profile puts ~6% of it in
-allocator churn (position-list growth) and the rest in the scan-and-update
-body itself. The remaining structural idea is CLAUDE.md's linked-list
-representation with position-indexed occurrences, replacing the full-word
-rescan per merge; it is a real win on paper but a parity risk, so it belongs
-in its own change with heavy fuzzing.
-
-## Parity verified at 12.9 GB
-
-`modal run scripts/modal_benchmark.py::parity --size-mb 13000` trains both
-trainers on the same 12.9 GB corpus keeping their merge lists, and diffs
-them. Vocab 32000, 16 cores (deliberately not 64 — HF degrades with core count,
-and these runs need it to finish correctly rather than fast, which also makes
-them the least favourable comparison for gigatrain):
+`modal run scripts/modal_benchmark.py::parity --size-mb 13000`. 12.9 GB FineWeb,
+vocab 32000, 16 cores (deliberately not 64 — HF degrades with core count, so
+this is the least favourable setting for gigatrain).
 
 | pretokenizer | merges | gigatrain | HF | identical |
 |---|---|---|---|---|
-| ByteLevel | 31,790 | 38.0 s | 257.1 s | yes |
-| whitespace | 16,969 | 107.8 s | 496.9 s | yes |
+| ByteLevel | 31,790 | **38.0 s** | 257.1 s | yes |
+| whitespace | 16,969 | **107.8 s** | 496.9 s | yes |
 
-Note ByteLevel is both *faster* and produces *more* merges: it yields far
-fewer unique pretokens (9.0M vs 27.4M), so phase 2 does less work, and the
-32k vocabulary is reached with more merges because its alphabet is 256 bytes
-rather than every character observed.
+ByteLevel is both faster *and* produces more merges: it yields far fewer unique
+pretokens (9.0M vs 27.4M), and the 32k vocabulary is reached with more merges
+because its alphabet is 256 bytes rather than every character observed.
 
-Until this run, nothing above 1 GB had been diffed: the benchmark harnesses
-send trainer stdout to `/dev/null`, so the 12.9 GB headline asserted a parity
-result that had never been computed. It has now.
+Merge lists have also been diffed at 100 MB and 1 GB in both modes. The
+per-commit CI gate's largest corpus is 4.9 MB — see README, "Parity".
 
-64-core x86-64 Linux, 192 GiB, glibc, vocab 32000. This is the run the laptop
-could not do: with enough RAM, HuggingFace and SentencePiece are no longer
-swap-bound, so these are real timings rather than "it thrashed".
+## 19.4 GB: milestone 5 and issue #1681
 
-| trainer | pretokenizer | wall | peak RSS | outcome |
-|---|---|---|---|---|
-| **gigatrain** | ByteLevel | **43.8 s** | 2.7 GB | ok |
-| **gigatrain** | whitespace | **129.4 s** | 6.7 GB | ok |
-| SentencePiece v0.2.2 | its own | 135.0 s | 20.0 GB | **SIGSEGV** |
-| HuggingFace | whitespace | 754.9 s | 29.8 GB | ok |
-| rustbpe | GPT-4 regex | 975.4 s | 5.3 GB | ok |
-
-**Like-for-like is whitespace vs whitespace: 129.4 s against 754.9 s, 5.8x**,
-with identical output. The 43.8 s ByteLevel figure is 17.2x HF's wall time but
-produces a different tokenizer, so it is not a speedup number. No HF ByteLevel
-figure exists at this size because `modal_benchmark.py:159` does not pass
-`--pretokenizer` to the HF CLI, which defaults to `WhitespaceSplit` — the CLI
-itself supports `bytelevel` (`hf_train_cli.py:19`) and it is used for the
-12.9 GB parity runs below. Running it here is a one-line change and would give
-the missing like-for-like ByteLevel row.
-
-Three things worth stating plainly.
-
-**HuggingFace does finish, given 192 GiB** — in 12.6 minutes, using 29.8 GB of
-resident memory. That is 4.4x gigatrain's whitespace mode (6.7 GB, the
-like-for-like comparison) and 11x its ByteLevel mode (2.7 GB). On a 34 GB
-laptop the same job never completed in an hour. So the honest claim is not
-"HF cannot do this"; it is that HF needs several times the memory and, like
-for like, 5.8x the time.
-
-**SentencePiece crashed.** It ran 135 s and died with SIGSEGV (rc=139) at
-20 GB resident, having been given 192 GiB. This matches the segfault reported
-in sentencepiece#862 on a 98 GB corpus. It is a crash, not a timeout.
-
-**rustbpe is the memory winner.** At 5.3 GB it uses *less* than gigatrain's
-whitespace mode, though about twice gigatrain's ByteLevel mode — while taking
-22x longer. If memory were the only axis it would be a genuine contender.
-
-Note ByteLevel is 3x faster than whitespace *on this box*, because it yields
-far fewer unique pretokens (9.0M vs 27.4M) and phase 2 scales with that. The
-gap is machine-dependent, not scale-dependent: on the same 12.9 GB file on the
-10-core laptop, ByteLevel is 85.4 s and whitespace 85.7 s — a 1.0x gap. An
-earlier version of this line claimed the gap "widens with scale", which the
-laptop's own numbers contradict.
-
-## 19.4 GB on a "normal machine" — milestone 5, and issue #1681's size
-
-CLAUDE.md milestone 5 sets the target *"20 GB corpus trains without OOM on a
-normal machine, directly answering issue #1681"*. Until now the largest run in
-this repo was 12.9 GB, so the target had never been tested.
-
-`modal run scripts/modal_benchmark.py::main --sizes 20000 --cpu 16 --memory 64`
-on **x86-64 Linux, 16 cores, 64 GiB**, vocab 32000. The deliberately modest box
-is the point: #1681 is about OOM, so a 192 GiB machine would not answer it.
+CLAUDE.md milestone 5 targets *"20 GB trains without OOM on a normal machine."*
+16 cores / 64 GiB — modest on purpose, since #1681 is about OOM.
 
 | trainer | pretokenizer | wall | peak RSS | outcome |
 |---|---|---|---|---|
@@ -238,39 +60,20 @@ is the point: #1681 is about OOM, so a 192 GiB machine would not answer it.
 | HuggingFace 0.22.2 | whitespace | 730.9 s | 36.3 GB | ok |
 | rustbpe | GPT-4 regex | 1216.7 s | 5.8 GB | ok |
 
-**Like-for-like is whitespace vs whitespace: 137.4 s against 730.9 s (5.3x),
-on 7.2 GB against 36.3 GB (5.0x).** That 5.3x sits alongside the 5.8x measured
-at 12.9 GB on 64 cores, so the advantage is stable across both scale and core
-count.
+Like-for-like whitespace: **5.3x on 5.0x less memory.** HF needs **1.9x the
+corpus size in RAM**, which is the mechanism behind #1681; gigatrain needs
+0.15x. SentencePiece reproduced its 12.9 GB segfault on a different machine and
+corpus size, so that crash tracks input scale.
 
-SentencePiece segfaulted again at 158 s and 27.2 GB resident, reproducing its
-12.9 GB behaviour on a different machine, core count and corpus size — so that
-crash is a property of the input scale rather than a one-off. rustbpe finished
-but took 20 minutes, and is again the memory winner among the baselines at
-5.8 GB — less than gigatrain's whitespace mode, more than twice its ByteLevel
-mode.
+Corpus is 19.4 GB, not 20 — the parquet-yield estimate was wrong (~3.2 GB of
+text each, not 4–5). Fixed for future runs; reported at its true size.
 
-The memory line is the one that answers #1681. HuggingFace needed **36.3 GB of
-RAM for 19.4 GB of text — 1.9x the corpus** — which is why a 20 GB corpus OOMs
-on machines that look like they should cope, and it would not have fit on a
-32 GB box. gigatrain's ByteLevel mode used 2.9 GB, **0.15x the corpus and 12.5x
-less than HF**.
+## One-session comparison
 
-**The corpus is 19.4 GB, not 20 GB.** `_prepare_corpora` assumed 4-5 GB of text
-per FineWeb parquet; the measured yield is ~3.2 GB, so six parquets gave
-19,370 MB and the script warned rather than failing. The estimate is now fixed
-(3 GB per parquet plus one), but the numbers above are from the 19.4 GB file
-and are reported at that size.
-
-## One-session comparison — the only mutually comparable table here
-
-Every other multi-trainer table in this repo was assembled from separate
-sessions, which is why gigatrain's own 1 GB ByteLevel time appears as 8.5 s,
-10.22 s and 14.9 s in three different places. Ratios built on three different
-baselines cannot be compared to each other. This run fixes that: **one
-container, one page cache, all five trainers, median of 3 repeats**
-(`modal run scripts/modal_benchmark.py::onesession`), 16-core x86-64 Linux /
-64 GiB, vocab 32000.
+**The only mutually comparable multi-trainer table here.** Every other was
+assembled from separate sessions, which is why gigatrain's own 1 GB figure
+appears three different ways in this repo's history. One container, one page
+cache, median of 3 repeats, 16-core Linux, vocab 32000.
 
 **1 GB FineWeb**
 
@@ -286,234 +89,160 @@ container, one page cache, all five trainers, median of 3 repeats**
 
 **100 MB FineWeb**
 
-| trainer | pretokenizer | wall | peak RSS | vs gigatrain | parity |
-|---|---|---|---|---|---|
-| **gigatrain** | ByteLevel | **1.5 s** ±7% | **153 MB** | — | — |
-| gigatoken | its own | 7.4 s ±1% | 242 MB | 4.9x | — |
-| rustbpe | GPT-4 regex | 9.0 s ±4% | 390 MB | 6.0x | — |
-| SentencePiece | its own | 15.2 s ±2% | 547 MB | 10.1x | — |
-| HuggingFace | ByteLevel | 16.1 s ±4% | 537 MB | 10.7x | **identical (31,801)** |
-| **gigatrain** | whitespace | **3.8 s** ±6% | 260 MB | — | — |
-| HuggingFace | whitespace | 27.6 s ±5% | 1.0 GB | 7.3x | **identical (29,299)** |
-
-**The like-for-like rows are the whitespace pairs**, where both sides run the
-same pretokenizer and the merge lists were diffed: 4.5x at 1 GB and 7.3x at
-100 MB, on ~3.9x less memory in both cases. The other trainers use their own
-pretokenizers and are time/memory comparisons only.
-
-**What this changes.** PRIOR_ART.md previously described rustbpe as "the closest
-competitor" at 5–7x in one section while quoting gigatoken at 1.8x in another —
-two claims that could not be ordered because they rested on different
-baselines. On one baseline the order is unambiguous: **gigatoken is the closest
-competitor at 3.5x, and rustbpe is not close at 10.1x.**
-
-This is not a correction of the earlier numbers in the strict sense — those
-were 10-core macOS and these are 16-core Linux, so the absolute figures are not
-expected to match. It is the first table in this repo whose *ratios* are
-internally consistent.
-
-## Validation on 64-core Linux (Modal)
-
-Run with `modal run scripts/modal_benchmark.py --sizes 100,1000 --cpu 64`.
-x86-64 Linux, 64 cores, 192 GiB, glibc. Wall time / peak RSS, vocab 32000.
-
-| corpus | gigatrain (ByteLevel) | rustbpe | SentencePiece | HF |
+| trainer | wall | peak RSS | vs gigatrain | parity |
 |---|---|---|---|---|
-| 100 MB | **2.6 s / 608 MB** | 10.4 s (3.9x) | 15.5 s (5.9x) | 181.0 s (68.8x) |
-| 1 GB | **7.4 s / 1570 MB** | 88.2 s (11.9x) | 112.7 s (15.2x) | 244.4 s (33.1x) |
+| **gigatrain** (BL) | **1.5 s** ±7% | **153 MB** | — | — |
+| gigatoken | 7.4 s ±1% | 242 MB | 4.9x | — |
+| rustbpe | 9.0 s ±4% | 390 MB | 6.0x | — |
+| SentencePiece | 15.2 s ±2% | 547 MB | 10.1x | — |
+| HuggingFace (BL) | 16.1 s ±4% | 537 MB | 10.7x | **identical (31,801)** |
+| **gigatrain** (ws) | **3.8 s** ±6% | 260 MB | — | — |
+| HuggingFace (ws) | 27.6 s ±5% | 1.0 GB | 7.3x | **identical (29,299)** |
 
-Two things this settles.
+**Missing: ffbpe and YouTokenToMe.** Neither is in the Modal image, so neither
+is in this table. Any "fastest" claim is unsupported until they are.
 
-**The advantage is not an Apple Silicon artifact.** The ratios hold or widen
-on x86-64 Linux: rustbpe 9.5x -> 11.9x at 1 GB, SentencePiece 13x -> 15.2x.
+## Controlled core-count sweep
 
-**HuggingFace degrades with core count — now measured under control.**
+One box, one binary, one corpus, varying only `RAYON_NUM_THREADS`. 64-core
+x86-64 Linux, vocab 32000, median of 3.
 
-The claim used to rest on 9.7 s (10-core macOS) against 181 s (64-core Linux),
-which varies ISA, OS, allocator and machine as well as core count. That was
-retracted as uncontrolled. `modal_benchmark.py::threads` runs the experiment
-properly: **one box, one binary, one corpus, varying only `RAYON_NUM_THREADS`**
-(64-core x86-64 Linux, 100 MB FineWeb, vocab 32000, median of 3):
-
-| threads | HF | peak RSS | gigatrain |
+| threads | HF @100 MB | HF @1 GB | gigatrain @1 GB |
 |---|---|---|---|
-| 1 | 23.8 s | 764 MB | 3.18 s |
-| 2 | 18.6 s | 781 MB | 3.04 s |
-| 4 | **15.4 s** | 827 MB | 2.86 s |
-| 8 | 16.0 s | 888 MB | 2.66 s |
-| 16 | 17.9 s | 930 MB | 2.98 s |
-| 32 | 29.2 s | 1064 MB | 2.86 s |
-| 64 | **158.6 s** | 1215 MB | 3.04 s |
+| 1 | 23.8 s | 134.6 s | 22.2 s |
+| 4 | **15.4 s** | 79.9 s | 16.5 s |
+| 16 | 17.9 s | **66.0 s** | 14.5 s |
+| 32 | 29.2 s | 83.9 s | 14.5 s |
+| 36 | — | 88.5 s | 14.4 s |
+| 64 | **158.6 s** | 156.8 s | 14.3 s |
 
-HF is U-shaped with a minimum at 4 threads. At 64 it is **10.3x slower than its
-own optimum** and 6.7x slower than single-threaded, while peak RSS rises
-monotonically 764 MB -> 1215 MB. gigatrain is flat within noise.
+HF is U-shaped and **the optimum moves with corpus size** — 4 threads at
+100 MB, 16 at 1 GB. Worst/optimum is 10.3x at 100 MB but only **2.4x at 1 GB**,
+and at 36 threads (YouTokenToMe's core count, on their headline size) it is
+**1.34x**. Peak RSS rises monotonically with threads (764 → 1215 MB at 100 MB).
 
-So the effect is real and the mechanism (rayon-parallel pair counting reducing
-per-thread hash maps) is visible in the source — but **the honest magnitude is
-10.3x against its own optimum, not the "19x" this file once claimed.** The
-retracted number was inflated by the confounds.
+The mechanism is visible in HF's source: rayon-parallel pair counting reduces
+per-thread hash maps, so more cores means more merging work. SentencePiece's
+maintainer measured the same strategy as ineffective-to-harmful independently
+([sentencepiece#366](https://github.com/google/sentencepiece/issues/366)).
 
-gigatrain being flat here is not evidence of good scaling: at 100 MB the
-sequential phase 2 dominates, so phase-1 parallelism has little to show. The
-scaling result for gigatrain is the 1 GB thread scan further down.
+**Quote the 1 GB numbers**, not the 100 MB ones: the 10.3x exists only at a
+configuration no published benchmark uses.
 
-This is also **not** a reproduction of issue #1313 — see
-[the retraction above](#a-retraction-this-is-not-hf-issue-1313). #1313 is a
-`vocab_size=512` run on unsegmented DNA-like data, and its maintainer
-diagnosed it in-thread as degenerate pretokenization. The anti-scaling
-measured here is a separate phenomenon that happens to point the same
-direction.
+## Between-allocation variance
 
-### Thread scaling, and a real bug it exposed
+One fixed configuration (100 MB, ByteLevel, vocab 32k) on **8 freshly allocated
+containers**, identity verified per probe via `/proc/sys/kernel/random/boot_id`
+and `MODAL_TASK_ID` (8 distinct values, ~1 s uptime each).
 
-Sizing scanners and owners each at `nthreads` put ~2x the core count on the
-CPU. On 10 cores that was inside the noise — an earlier attempt to fix it was
-reverted for lack of evidence. On 64 cores it is unmistakable:
-
-| threads | before (scanners=owners=N) | after (split budget) |
+| | within-run (3 repeats) | across 8 allocations |
 |---|---|---|
-| 16 | 5.71 s / 604 MB | 5.3 s / 505 MB |
-| 32 | 5.51 s / 729 MB | 4.8 s / 534 MB |
-| 48 | 6.31 s / 958 MB | 4.7 s / 567 MB |
-| 64 | 7.16 s / 1384 MB | **4.9 s / 638 MB** |
-| 96 | 8.25 s / 1804 MB | 5.2 s / 760 MB |
+| gigatrain | ±2% | **20%** (1.19 → 1.46 s) |
+| HuggingFace | ±2% | **28%** (16.82 → 21.99 s) |
 
-Before, throughput peaked at 32 threads and got *worse* with more cores, with
-peak RSS climbing to 1.8 GB. After splitting the budget between the two pools,
-the curve is flat from 32 to 96. At the default on a 64-core box that is
-**1.46x faster and 2.2x less memory**.
+Repeats inside one allocation measure scheduler jitter, not reproducibility.
+**No number here should be read to two significant figures.**
 
-`--threads N` now means N workers total, split between the pools, rather than
-N of each.
+## Degenerate corpora
 
-## Remaining optimization candidates
+45 MB each, vocab 32000, 16 cores, median of 3, 1800 s timeout, one container.
+Real corpora via `scripts/real_corpora.py` (UCSC hg38 chr21, npm registry
+packuments, cdnjs bundles, Project Gutenberg), synthetic via
+`scripts/degenerate_corpora.py`.
 
-Phase 1 is now ~83% of the ByteLevel runtime (70.6 s of 85 s at 12.9 GB), so
-that is where the remaining work is. A sampling profile shows scanner and
-owner threads mostly *blocked on their channels* rather than computing, which
-means the pipeline is limited by hand-offs or by I/O, not by the split/hash
-inner loops that were just optimized.
+| corpus | gigatrain (bl) | HF (bl) | parity |
+|---|---|---|---|
+| dna_real (FASTA) | **13.7 s / 957 MB** | 73.9 s / 3.5 GB | identical |
+| dna_real_oneline | **267 s / 800 MB** | **TIMEOUT** | — |
+| dna_real_acgt_only | **251 s / 754 MB** | **TIMEOUT** | — |
+| json_real_oneline | **4.0 s / 235 MB** | 115.3 s / 4.5 GB | identical |
+| minjs_real | **0.6 s / 164 MB** | 20.9 s / 3.7 GB | identical |
+| text_real_cjk | **0.9 s / 107 MB** | 21.9 s / 419 MB | identical |
+| text_real_cr_only | **2.4 s / 75 MB** | 95.9 s / 4.1 GB | identical |
 
-Tried and rejected: retuning the thread pools. Sizing readers/scanners/owners
-each at `nthreads` spawns ~3x the core count, and one measurement suggested
-4 threads beat 10. Under a repeated A/B (4 alternating rounds) the difference
-was 4.94 s vs 4.87 s — inside the noise — and halving the scanner/owner pools
-was clearly worse. Reverted rather than landing complexity for a
-non-effect.
+Across 20 configurations (10 corpora × 2 modes) **gigatrain completed all 20;
+HuggingFace completed 15**, and every one of the 15 was byte-identical. rustbpe
+is ~15% faster than gigatrain on the two single-giant-pretoken corpora
+(235.7 s vs 266.8 s). SentencePiece failed 5 of 7 in an earlier pass — four
+refusals ("Vocabulary size too high... set it to a value <= 28") and one
+SIGABRT.
 
-### Four optimizations tried and rejected
+**Caveats.** `text_real_cjk` is one Gutenberg book repeated 18x and
+`minjs_real` cycles 2.5x, so both have inflated redundancy and carry no claim.
+`TIMEOUT` is censored data, not a proof of non-termination.
 
-Phase 1 was instrumented per stage (`GIGATRAIN_STATS=1` now reports summed
-CPU-ms for read / scan+hash / send-blocked / recv-blocked / insert). On 1 GB
-ByteLevel, 10 threads: **scan+hash 7589 ms across 5 scanners, insert 5538 ms
-across 5 owners, and owners blocked 2118 ms waiting on recv**. Scanners are
-the critical path — their per-thread ~1518 ms is essentially the 1.63 s wall.
+## Boundary-free input
 
-Four changes were implemented against that reading and measured on a clean
-64-core box. The first three were reverted; the fourth was rejected at 10
-cores, then re-measured at 64 and landed (it is the thread-budget split
-tabulated above):
+A corpus with no cut point (no whitespace, or no newline under ByteLevel) forces
+the reader to buffer the longest boundary-free run, and seven of eight reader
+ranges find no boundary and retire — so phase 1 collapses to one thread. 2 GB
+single-line JSON against the same bytes with a newline every 1000, one
+container, 3 repeats:
 
-| change | rationale | measured (1 GB, 64 threads) |
+| | wall | peak RSS |
 |---|---|---|
-| 60/40 scanner/owner split | CPU split is ~58/42, so balance the pools | 4.7 s vs 4.7 s — no effect |
-| byte-table ASCII path in `next_piece_len` | avoid decoding chars to classify them | **10% slower**; 1 thread 8.4 s -> 12.1 s |
-| zero-copy batching (spans into the shared chunk) | removes one memcpy pass over the corpus | 5.4 s vs 4.8 s — slightly worse |
-| (earlier) thread-pool retuning at 10 cores | apparent oversubscription | inside noise; later confirmed and landed at 64 cores |
+| no cut points (ByteLevel) | 160.9 s ±4% | 5.6 GB |
+| newline every 1000 B | 80.8 s ±3% | 5.8 GB |
+| no cut points (**whitespace**) | **>3600 s TIMEOUT** | — |
 
-The ASCII path is instructive: replacing `char_indices()` with a per-character
-`class_at()` that indexes `text[i..]` re-does a char-boundary check on every
-character, which costs more than the iterator it replaced. Faster-looking code
-was slower code.
+**2.0x under ByteLevel, and memory is unaffected** (5.6 vs 5.8 GB). Under
+whitespace the whole 2 GB is a single word and it does not finish in an hour.
 
-The conclusion from the instrumentation is that phase 1 is bound by the
-hashing and hash-map inserts themselves, not by copying, classification, or
-pool balance. Reducing it further means changing what work is done — a cheaper
-hash, or not hashing every occurrence — not doing the same work more
-efficiently.
+The fix — cutting a long line at a safe interior pretoken boundary, found by
+running the pretokenizer rather than reasoning about the regex — is designed
+but unimplemented, because it touches the parity-critical path.
 
-Still untested, roughly by expected payoff:
+## Where the memory goes
 
-1. **A cheaper hash for routing.** Every token occurrence is hashed
-   (~240M times per GB). FxHash over short slices is already cheap, but the
-   instrumentation says this is where the time is, so it is the first thing to
-   attack.
-2. **Word-at-a-time scanning.** Processing 8 bytes per step with `u64` bit
-   tricks is portable (no intrinsics, identical on ARM and x86). Unlike the
-   rejected ASCII path, this removes work rather than reorganising it.
-3. **Allocator choice.** A mimalloc/jemalloc feature flag may change peak RSS
-   materially, especially on Linux.
-4. **Merge loop**: CLAUDE.md's linked-list with position-indexed occurrences,
-   replacing the full-word rescan. Now only ~17% of runtime, so the payoff
-   shrank while the parity risk did not.
+Profiled with `GIGATRAIN_STATS=1`. CLAUDE.md predicted `pair_where` would be
+the hazard. It was not: at 1 GB there are 63k distinct pairs (~1 MB of counts)
+and 189 MB of position lists. **Phase 1 was the hog** — per-worker
+`HashMap<String, u64>` accumulators held 1.7 GB of a 2.26 GB peak, because
+every unique word cost a 24-byte header plus its own allocation plus rounding,
+and frequent words were stored once per worker.
 
-**Measuring these needs a quiet machine.** After the HF and SentencePiece runs
-left 14-28 GB of swap occupied, repeated runs of an identical configuration
-varied by up to 2x — larger than the effects being chased. The two wins above
-were only trustworthy because they were A/B'd with alternating rounds and had
-effect sizes (1.4x, 1.7x) well clear of that noise.
+Fixes, in order of effect: arena-backed counter with disjoint hash shards
+(1.7 GB → 422 MB); word strings dropped once tokenized; flat symbol arena
+instead of a `Vec` per word (removes 4.1M allocations).
 
-## Where the memory actually went
+Phase-1 design, same 1 GB corpus, 10 cores:
 
-Profiled with `GIGATRAIN_STATS=1` (stage RSS + structure sizes). The
-prediction in CLAUDE.md was that `pair_where` sets would be the hazard. They
-were not — on 1 GB there are only 63k distinct pairs (~1 MB of counts) and
-189 MB of position lists. **Phase 1 was the hog**: per-worker
-`HashMap<String, u64>` accumulators held 1.7 GB of the 2.26 GB peak, because
-every unique word cost a 24-byte header plus its own heap allocation plus
-allocator rounding, and frequent words were stored once per worker.
-
-Fixes, in order of effect:
-
-1. Arena-backed word counter, disjoint hash shards (1.7 GB -> 422 MB).
-2. Word strings dropped as soon as words are tokenized to symbol IDs.
-3. Flat symbol arena instead of a `Vec<Symbol>` per unique word (removes 4.1M
-   allocations).
-
-## Phase 1 design: three variants measured
-
-Same 1 GB corpus, 10 cores:
-
-| design | phase 1 wall | phase 1 RSS | scaling 1->10 threads |
+| design | wall | RSS | scaling 1→10 threads |
 |---|---|---|---|
 | per-worker maps, merge at end | 2.4 s | 1.3 GB | — |
-| broadcast chunks to shard owners | 4.8 s | 422 MB | 9.8 s -> 4.8 s (2.0x) |
-| **shuffle: reader -> scanners -> shards** | **1.3 s** | **468 MB** | 6.4 s -> 1.3 s (4.8x) |
+| broadcast chunks to shard owners | 4.8 s | 422 MB | 2.0x |
+| **shuffle: reader → scanners → shards** | **1.3 s** | **468 MB** | **4.8x** |
 
-The broadcast variant fixes memory but replicates splitting and hashing on
-every worker, which is a fixed floor that gets relatively worse as core count
-rises. The shuffle divides every stage, which is why it wins on both axes.
+## Optimizations tried and rejected
 
-## Generalization: what is machine-specific and what is not
+| change | rationale | result |
+|---|---|---|
+| 60/40 scanner/owner split | CPU split measured ~58/42 | no effect |
+| byte-table ASCII path in piece scanning | stop decoding chars to classify | **10% slower** |
+| zero-copy batching | removes a memcpy pass | slightly worse |
+| thread-pool retune @10 cores | apparent oversubscription | inside noise, reverted |
+| the same retune @64 cores | — | **worked: 1.46x, 2.2x less memory** |
 
-**Portable (algorithmic / data-layout).** Everything that produced the gains
-above is structural, not tuned to this chip: no SIMD, no intrinsics, no
-`target-cpu` flags, no assumptions about cache sizes or core count (thread
-count is read at runtime). The wins come from doing less work and allocating
-less memory — fewer allocations, smaller records, no replicated scanning, no
-single-threaded merge. Those hold on any CPU.
+The ASCII path is the lesson: replacing `char_indices()` with a per-character
+`class_at()` that indexes `text[i..]` re-does a UTF-8 boundary check every
+character. Faster-looking code, slower code. And the last two rows are the same
+change, correctly rejected at 10 cores and correctly accepted at 64 — the
+laptop was not a weaker server, it was the wrong instrument.
 
-**Ratios that will move.** The specific multipliers are this machine's:
+## Remaining candidates
 
-- Apple Silicon has unusually high per-core memory bandwidth, which flatters
-  the pointer-chasing merge loop for *both* trainers. On a server CPU with
-  more cores but less bandwidth per core, phase 2 (single-threaded, memory-
-  bound by construction) should slow for both sides; the ratio may narrow.
-- Peak RSS depends on the allocator. macOS libmalloc is slow to return freed
-  pages, so measured peak overstates live data; glibc or jemalloc may report
-  lower peaks for the same code.
-- Only 10 cores were available. Phase 1 scales 4.8x on 10 threads and its
-  reader is still single-threaded, so it will plateau on a 64-core box —
-  parallel reads across files/offsets is the next fix. Phase 2 is sequential
-  by construction and gains nothing from more cores, so at high core counts
-  total time approaches phase 2 alone.
-- HF's side is a moving target: 0.22.2 is much healthier than the 2023-era
-  issues suggest. Their phase 1 reportedly degrades badly at high thread
-  counts (issue #1313), so the gap could widen on a many-core box — untested,
-  and it should not be claimed without a run.
+1. **Interior cut rule** for boundary-free input — 2.0x, parity-critical.
+2. **A cheaper routing hash.** Every occurrence is hashed (~240M per GB) and
+   instrumentation puts the time there.
+3. **Word-at-a-time scanning** with `u64` bit tricks — portable, removes work.
+4. **Allocator flag** (mimalloc/jemalloc) — untested, plausibly real on Linux.
+5. **Merge loop**: position-indexed occurrences replacing the full-word rescan.
+   Now only ~17% of runtime, so the payoff shrank while the parity risk did not.
 
-**Not yet validated anywhere else.** These numbers are one machine, one OS,
-one allocator, one corpus. Before publishing: rerun on a many-core Linux
-server, and confirm the parity CI on a different architecture (the code has
-no endianness assumptions, but the claim should be tested, not reasoned).
+## Machine notes
+
+Two machines: a 10-core M-series laptop (macOS, libmalloc) and rented 16/64-core
+x86-64 Linux (glibc). **All laptop measurements were taken while an unrelated
+training job was running** and should be treated as indicative only; everything
+quoted above is from isolated cloud containers. Nothing is validated on ARM
+Linux or above 64 cores.

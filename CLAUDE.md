@@ -2,212 +2,108 @@
 
 ## What this is
 
-A tokenizer **trainer** that runs at web scale. Not an encoder. Gigatoken
+A tokenizer **trainer** that runs at web scale. Not an encoder — Gigatoken
 (https://github.com/marcelroed/gigatoken) already solved encoding at ~24 GB/s.
-Nothing has solved training. This is the sibling project.
 
-The pitch: train a 32k-vocab BPE tokenizer on 100 GB+ of text in minutes, with
-byte-exact output parity against HuggingFace `tokenizers`.
+The pitch: train a 32k-vocab BPE tokenizer on 10 GB+ of text in under a minute,
+with byte-exact output parity against HuggingFace `tokenizers`.
 
-## Why this is worth doing
+## Status, 2026-08-06
 
-HuggingFace's `BpeTrainer` is effectively unusable past a few GB:
+Milestones 1–6 done, 7 half done (WordPiece; no Unigram). Byte-exact HF parity
+verified at 12.9 GB in both pretokenization modes. Milestone 5 met: 19.4 GB
+trains in 47 s / 2.9 GB where HF needs 36.3 GB.
 
-- Issue #1313: 13 GB corpus, 256 threads, unfinished after 10+ hours.
-  YouTokenToMe did the same job in under 10 minutes on 8 threads.
-- Issue #1681: 20 GB corpus OOMs during the merge phase on 1.5 TB and 2 TB
-  machines.
+**Read [docs/CORRECTIONS.md](docs/CORRECTIONS.md) before quoting any number.**
+This project has retracted an entire experiment and revised five headline
+figures, several more than once. The standing rules at the bottom of that file
+exist because each was broken at least twice.
 
-**Correction.** Both issues are closed (#1313 as stale in 2023; #1681 on a
-workaround commenters showed does not apply to training). #1313 used
-`vocab_size=512` on unsegmented data, so its merge loop was nearly free and
-this project does **not** reproduce it — the cause was degenerate
-pretokenization, as a maintainer diagnosed in the thread at the time. The live
-memory issues are #1795 and #1824.
-
-Separately, HF slows down badly with thread count. This was first claimed from
-9.7 s (10-core mac) against 181 s (64-core Linux), which varies ISA, OS,
-allocator and machine as well as cores; that "19x" was retracted as
-uncontrolled. **The controlled sweep has since been run** — one box, one
-binary, one corpus, varying only `RAYON_NUM_THREADS`
-(`modal_benchmark.py::threads`). HF is U-shaped: 23.8 s at 1 thread, 15.4 s at
-4 (its optimum), 29.2 s at 32, **158.6 s at 64** — i.e. **10.3x slower than its
-own optimum**, with peak RSS rising 764 MB → 1215 MB. gigatrain is flat.
-SentencePiece's maintainer independently measured HF-style parallel merging as
-ineffective-to-harmful (sentencepiece#366). Quote 10.3x, never 19x.
-
-Everything published in response is hobbyist-scale: blog posts reporting 2000x
-on a 114 MB Gutenberg corpus and 230x on TinyStories, plus a header-only C++
-trainer that takes 1-2 hours for a 50k vocab. No production-grade tool exists.
-
-Meanwhile the adjacent stages are all claimed. Dedup has FED (107x over CPU,
-6.3x over NeMo Curator), SEDD (1.2T tokens in 3 hours on 32 V100s), and
-LSHBloom. Constrained decoding has XGrammar as the default backend across vLLM,
-SGLang, and TensorRT-LLM at under 40us/token. HTML extraction has moved to a
-quality race (rs-trafilatura, Dripper-0.6B) rather than a speed race. Training
-is the gap.
-
-Secondary motivation: this unblocks research. Nobody studies vocabulary design
-empirically at scale because you can't afford to train twenty vocabularies on a
-terabyte. Make it cheap and that becomes tractable.
-
-**Attempted, and retracted (docs/sweep-results.md).** The premise holds — the
-sweeps took minutes where they would have taken days — but the *results* were
-withdrawn after an adversarial audit found six independent defects in the
-experiment: the multilingual held-out set was a single language, the
-per-language equity numbers were measured in-sample, the corpora were never
-language-balanced, the "seeds" shared 91–95% of their documents for English
-and 0% for multilingual, and the rank-stratified overlap metric was measuring
-the byte alphabet rather than learned merges.
-
-Nothing quantitative from that sweep should be repeated — in particular the
-"70.6% multilingual compression cost" and the "2.2x worst-served language"
-figures, both of which were wrong for the reasons above. What survives is only
-a coarse shape, for English and code: vocabulary overlap with a large-corpus
-reference falls as the training corpus shrinks and falls faster for larger
-vocabularies, while fertility moves very little.
-
-The pitch that remains is "training is now fast and exact". Whether sampling
-down costs anything is once again an open question, and answering it properly
-is the point of rebuilding the experiment.
-
-## Status, 2026-08-02
-
-Milestones 1-6 are done and milestone 7 is half done (WordPiece). The trainer
-holds byte-exact HuggingFace parity, verified at 12.9 GB in both
-pretokenization modes, and is the fastest of five trainers measured. See
-README.md, BENCHMARKS.md and PRIOR_ART.md.
-
-**Three claims in this document have since been disproven by the project's
-own measurements. They are left in place with corrections rather than
-deleted, because the reasoning that produced them is still worth reading.**
-
-## The core algorithmic insight — SUPERSEDED
-
-Naive BPE training recounts every adjacent pair across the whole corpus on every
-merge. That is O(pretokens * vocab_size).
-
-The fix is incremental maintenance:
-
-- `pair_count: HashMap<(Sym, Sym), u64>` maintained across merges, not rebuilt.
-- `pair_where: HashMap<(Sym, Sym), HashSet<WordId>>`, an inverted index so a
-  merge only touches words that actually contain the merged pair.
-- On each merge, apply **delta updates** to the neighbouring pairs of each
-  occurrence: decrement `(left, x)` and `(y, right)`, increment `(left, xy)` and
-  `(xy, right)`.
-- A lazy max-heap for merge selection, with stale entries filtered on pop by
-  comparing against the live `pair_count`.
-
-This is O(affected occurrences) per merge instead of O(corpus).
-
-**Correction.** This is not an insight and not a differentiator: it is the
-standard algorithm. Sennrich et al. 2015 state it, Zouhar et al. 2023
-formalize it (arXiv:2306.16837), and `tokenizers`, SentencePiece and rustbpe
-all already implement it — HF's `word.rs` even has the arena-backed linked
-list listed below as future work. The naive baseline below is a strawman
-nobody ships, and quoting its speedup would be misleading.
-
-What actually produced the wins: the hash-sharded phase-1 pipeline, arena
-memory layout, and dropping word strings once tokenized. See ARCHITECTURE.md.
-
-Measured in pure Python, before any Rust, SIMD, or parallelism:
-
-```
-corpus 4MB,  1200 merges:  naive 139.9s -> incremental  0.71s   (198x)
-corpus 12MB,  800 merges:  naive 137.8s -> incremental  1.18s   (117x)
-corpus 12MB,  200 merges:  naive  31.4s -> incremental  0.39s    (82x)
-```
-
-`bpe_incremental.py` in this repo is the working reference implementation of
-both. Port it, do not reinvent it.
-
-## Non-negotiable requirement: exact parity
-
-This is the difference between a real tool and a demo, and it is the hard part.
-
-Output must match `tokenizers.trainers.BpeTrainer` merge-for-merge, including
-tie-breaking. The Python reference implementation diverges from naive around
-merge 375-490 purely on ties: the heap and the linear max disagree about which
-of several equal-count pairs to pick.
-
-Before optimizing anything, determine HuggingFace's actual tie-break rule by
-reading its source, then encode it in the heap comparator. Add a CI check that
-trains a small vocab both ways and asserts identical merge lists. Gigatoken's
-README emphasizes exact-match parity for encoding for the same reason: without
-it, nobody can adopt it as a drop-in.
+Decision (2026-08-06): **no paper.** Ship the tool, blog it, file the upstream
+bug. See [docs/publishing.md](docs/publishing.md) for why both candidate papers
+were dropped.
 
 ## Architecture
 
-Rust core, Python bindings via PyO3, mirroring Gigatoken's layout.
+Rust core, Python bindings via PyO3.
 
-Phase 1, pretokenization and word counting. Embarrassingly parallel across
-documents. Map-reduce into a frequency table of unique pretokens. This is where
-multithreading pays off. Read files directly from Rust; do not round-trip
-through Python.
+**Phase 1** — pretokenization and word counting. Embarrassingly parallel:
+reader → scanners (split + hash) → disjoint hash-sharded owners (count). Read
+files directly from Rust; do not round-trip through Python.
 
-Phase 2, the merge loop. Inherently sequential, since merge N+1 depends on
-merge N. Single-threaded and memory-bound. Optimization here is about memory
-layout, not parallelism.
+**Phase 2** — the merge loop. Inherently sequential (merge N+1 depends on
+merge N), memory-bound. Optimization here is memory layout, not parallelism.
 
-## Do NOT use a GPU
+Details in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Deliberate decision, not an oversight:
+### Do NOT use a GPU
 
-- The merge loop is sequential by construction. 32k merges means 32k dependent
-  steps that cannot be parallelized across.
-- The hot data structures are hash maps and variable-length sets. Pointer
-  chasing and irregular access, not dense arithmetic.
-- Work per merge is small and irregular, so kernel launch overhead dominates.
+Deliberate. The merge loop is sequential by construction; the hot structures
+are hash maps and variable-length sets (pointer chasing, irregular access, not
+dense arithmetic); work per merge is small and irregular so kernel launch
+overhead dominates. Dedup went GPU because MinHash *is* dense parallel hashing.
+This workload is the opposite shape. Empirically supported: every "GPU BPE"
+project is an *encoder* with a pre-trained merge table.
 
-Dedup went GPU and got claimed by three groups precisely because MinHash *is*
-dense parallel hashing. This workload is the opposite shape. That mismatch is
-why this gap is still open.
+Target hardware: many cores for phase 1, large RAM for phase 2.
 
-Target hardware: many CPU cores for phase 1, large RAM for phase 2.
+### Memory is the binding constraint
 
-## Memory is likely the real problem
+The incumbent failures are OOMs, not timeouts. Design for it: arena/bump
+allocation for symbol sequences, compact `u32` ids, a flat `symbols: Vec<u32>`
+with per-word offset slices, streaming phase 1 so the frequency table rather
+than the corpus must fit in RAM.
 
-Issue #1681 OOMed on 2 TB. Assume memory layout is the binding constraint, not
-CPU time, and design for it from the start:
+Profiling overturned the obvious guess: `pair_where` was 1 MB at 1 GB, while
+phase 1's `HashMap<String, u64>` was 1.7 GB of a 2.26 GB peak.
 
-- Arena/bump allocation for word symbol sequences. No per-word `Vec`.
-- Compact symbol IDs (u32) rather than string handles or byte tuples.
-- Consider a flat `symbols: Vec<u32>` with per-word offset slices, and a
-  doubly-linked-list representation over that arena so merges are O(1) splices
-  rather than rebuilding sequences.
-- Sets in `pair_where` are a memory hazard. Consider small-vec optimization
-  since most pairs occur in few words, and beware the Zipfian head where a few
-  pairs occur in nearly every word.
-- Streaming/out-of-core phase 1 so the frequency table, not the corpus, is what
-  has to fit in RAM.
+## Non-negotiable: exact parity
 
-## Milestones
+Output must match `tokenizers.trainers.BpeTrainer` merge-for-merge including
+tie-breaking. Without it nobody can adopt this as a drop-in.
 
-1. Port `bpe_incremental.py` to Rust, single-threaded, correctness only.
-2. Establish exact HF parity with a CI test. Do not proceed without this.
-3. Benchmark harness against `tokenizers` on 100 MB, 1 GB, 13 GB. The 13 GB
-   number is the headline, since it is the exact case in issue #1313.
-4. Parallelize phase 1.
-5. Memory-optimize phase 2. Target: 20 GB corpus trains without OOM on a normal
-   machine, directly answering issue #1681.
-6. PyO3 bindings with a `BpeTrainer`-compatible API so it is a drop-in.
-7. Extend to WordPiece and Unigram/SentencePiece, both of which Gigatoken lists
-   as unsupported.
+`scripts/run_parity_ci.sh` gates every commit. Never land a trainer change
+without it passing. [PARITY.md](PARITY.md) is the specification — HF's tie-break
+rule, stale-heap handling, `max_token_length` asymmetry, `i32` overflow in both
+directions, and the line-at-a-time file feed that silently changes output.
 
 ## Benchmarking rules
 
-- Always report against `tokenizers` as baseline, since it is the reference that
-  produced real tokenizers.
-- Use real corpora (OpenWebText, FineWeb samples). Synthetic Zipfian text does
-  not reproduce real failure modes.
-- Report wall time, peak RSS, and merge-list parity together. A speedup with
-  different output is not a speedup.
-- Vary both corpus size and vocab size independently. Naive scales with their
-  product; the whole claim is that this does not.
+These are not style preferences; each one exists because it was violated.
 
-## Positioning
+1. **Grep every number against its source before publishing.** If it appears
+   only in the write-up, it is not a measurement.
+2. **One variable per experiment.** If a thread scan is run for gigatrain, run
+   it for the baseline. State the configuration of *every* system compared.
+3. **Verify the machine is quiet and say so.** Every laptop number in this
+   repo's history was taken while an unrelated training job was running.
+4. **Repeat across allocations, not within.** ±2% within a container; 20–28%
+   between them.
+5. **Only a timeout may print as a timeout.** A harness fault once rendered 49
+   failures as a table of `>900s` timeouts.
+6. **Validate against real data before concluding.** Synthetic corpora differ
+   from real ones of the same nominal type by up to 24x, in both directions.
+7. **One session per comparison table**, or the ratios are not comparable.
+8. Always report wall time, peak RSS, and merge-list parity together. A speedup
+   with different output is not a speedup.
 
-Frame as complementary to Gigatoken, not competing. It encodes at GB/s; nothing
-trains at GB/s. Worth reaching out to Marcel Rød early, since it could land as a
-sibling crate or a contribution, and his repo already flags WordPiece and
-SentencePiece as gaps.
+## What is and is not defensible
+
+**Defensible:** byte-exact parity at 12.9 GB with a 6.8x speedup on the same
+pretokenizer; 19.4 GB in 2.9 GB of RAM against HF's 36.3 GB; completing 20/20
+degenerate configurations where HF does 15/20; PARITY.md as an artifact.
+
+**Not defensible:** novelty of the algorithm (Zouhar et al., implemented three
+times over); being first to HF-parity training (gigatoken); "fastest BPE
+trainer" (rustbpe wins on degenerate corpora; ffbpe and YouTokenToMe are
+unmeasured here); reproducing #1313.
+
+## Outstanding
+
+- Run ffbpe and YouTokenToMe in the one-session table — no "fastest" claim is
+  supportable until then.
+- Interior cut rule for boundary-free input (2.0x, parity-critical, designed).
+- `train_from_iterator` — the Python API takes file paths only, which is the
+  biggest adoption gap.
+- No regression test for the scanner-panic deadlock (needs a 4 GiB pretoken).
+- File the phantom-merge bug; comment on HF PR #2066.
