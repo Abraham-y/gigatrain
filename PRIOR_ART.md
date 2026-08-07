@@ -17,8 +17,8 @@ Re-check with `python scripts/fetch_audit_sources.py --verify`.
 `TieBreaking::HuggingFace` as the default, and
 `tests/test_bpe_train_compare.py::test_merges_identical` asserts the merge list
 matches `BpeTrainer` position-for-position. Shipped in 0.10.0. So "nothing
-trains with HF parity" is false, and it is the closest competitor — **3.5x** in
-the one-session table.
+trains with HF parity" is false, and it is the closest competitor — **3.9x** in
+the one-session table, narrowly ahead of YouTokenToMe.
 
 Where this project still differs:
 
@@ -116,14 +116,25 @@ processing" with no numbers.
 a field whose canonical failure (#1681, #1795, #1824, sentencepiece#1021) is
 OOM. Four of six do not measure the axis that is failing.
 
-**The thread-count defect is in the most-cited benchmark.** YouTokenToMe states
-its hardware (36-core Xeon) and its own thread count ("YouTokenToMe used 4
-threads"), notes SentencePiece and fastBPE are single-threaded — and never
-states HuggingFace's, while scanning threads for itself only. Given the
-controlled sweep, HF at 36 threads on 1 GB sits **1.34x past its optimum**. The
-claim here is narrow and deliberately so: not that their conclusion is wrong,
-but that **the number is not attributable**. gigatrain had the identical defect
-until August 2026.
+**The thread-count defect is in the most-cited benchmark — but it cost them
+little.** YouTokenToMe states its hardware (36-core Xeon) and its own thread
+count ("YouTokenToMe used 4 threads"), notes SentencePiece and fastBPE are
+single-threaded — and never states HuggingFace's, while scanning threads for
+itself only. That is a real reporting gap, and gigatrain had the identical
+defect until August 2026.
+
+**However, their numbers reproduce.** Their benchmark reports 25.4 s for
+YouTokenToMe and 97.7 s for HuggingFace on 1 GB English at 36 cores. Run here
+on 16 cores: **26.3 s** and **101.1 s** (see BENCHMARKS.md, "One-session
+comparison"). An earlier draft of this section implied their HF baseline was
+materially inflated by the unreported thread setting; the measurement says
+otherwise, consistent with the 1 GB core-count curve being shallow (1.34x at
+36 threads).
+
+So the honest claim is narrower still: the number is **not attributable from
+what they published** — a reader cannot reconstruct it — but it appears to be
+**substantially correct**. Unreported configuration is a reproducibility
+problem here, not an accuracy one.
 
 **The most rigorous benchmark is the least known.** ffbpe gates timings on
 configuration match — *"Timing results are informational unless the input,
@@ -163,8 +174,12 @@ documented nowhere else including HuggingFace's own docs.
 
 ## 5. Open
 
-- **Run ffbpe and YouTokenToMe in the one-session table.** Until then no
-  "fastest" claim is supportable.
+- ~~Run ffbpe and YouTokenToMe in the one-session table~~ **done 2026-08-07.**
+  All seven trainers are now in one comparable table; gigatrain is fastest at
+  both sizes. YouTokenToMe is second-fastest at 1 GB but uses **6.4 GB of RAM
+  for a 1 GB corpus**, 12x gigatrain's and the highest of any trainer measured
+  — a cost invisible in the literature, since no published trainer benchmark
+  reports memory.
 - gigatoken at 12.9 GB is unmeasured.
 - SentencePiece's five degenerate-corpus failures are uncharacterised beyond
   the refusal case.

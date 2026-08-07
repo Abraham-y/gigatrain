@@ -8,7 +8,7 @@ Two candidates were worked up and both were dropped:
 
 **A systems paper on the trainer.** The algorithm is standard (Zouhar et al.,
 already implemented three times over), gigatoken already ships an HF-parity
-trainer 3.5x behind, and no NeurIPS 2026 workshop fits a data-pipeline systems
+trainer 3.9x behind, and no NeurIPS 2026 workshop fits a data-pipeline systems
 contribution. MLSys or an efficiency-track NLP venue on a later deadline is the
 right home if this is ever revisited.
 

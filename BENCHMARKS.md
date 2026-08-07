@@ -19,13 +19,14 @@ run different pretokenizers are time/memory comparisons only and are marked.
 |---|---|---|
 | **Headline** — same pretokenizer, verified identical output | 12.9 GB in **38.0 s** vs HF **257.1 s** (**6.8x**), 31,790 merges identical | [Parity at scale](#parity-at-scale) |
 | Memory at scale | 19.4 GB in **2.9 GB** RAM vs HF **36.3 GB** | [19.4 GB](#194-gb-milestone-5-and-issue-1681) |
-| Comparable multi-trainer ratios | gigatoken 3.5x · HF 6.6x · rustbpe 10.1x · SentencePiece 15.3x | [One-session](#one-session-comparison) |
+| Comparable multi-trainer ratios (all 7) | gigatoken 3.9x · YouTokenToMe 3.9x · HF 7.0x · ffbpe 7.8x · rustbpe 11.6x · SentencePiece 16.1x | [One-session](#one-session-comparison) |
 | HF thread pathology | **2.4x** at 1 GB (1.34x at 36 threads); 10.3x at 100 MB | [Core-count sweep](#controlled-core-count-sweep) |
 | Measurement noise | **20–28%** between allocations, ±2% within | [Variance](#between-allocation-variance) |
 
-**Do not claim "fastest BPE trainer."** rustbpe is ~15% faster on
-single-giant-pretoken corpora, and ffbpe and YouTokenToMe have never been run
-in the comparable table.
+**"Fastest of the seven trainers that exist, on web text"** is now supported —
+all seven are in the one-session table. Keep the caveats attached: only the
+HuggingFace rows have verified identical output, and rustbpe is ~15% faster on
+single-giant-pretoken corpora.
 
 ---
 
@@ -70,37 +71,66 @@ text each, not 4–5). Fixed for future runs; reported at its true size.
 
 ## One-session comparison
 
-**The only mutually comparable multi-trainer table here.** Every other was
-assembled from separate sessions, which is why gigatrain's own 1 GB figure
-appears three different ways in this repo's history. One container, one page
-cache, median of 3 repeats, 16-core Linux, vocab 32000.
+**The only mutually comparable multi-trainer table here**, and now complete —
+all seven trainers that exist. Every other table was assembled from separate
+sessions, which is why gigatrain's own 1 GB figure appears three different ways
+in this repo's history. One container, one page cache, median of 3 repeats,
+16-core Linux, vocab 32000.
 
-**1 GB FineWeb**
+**1 GB FineWeb, ByteLevel**
 
 | trainer | pretokenizer | wall | peak RSS | vs gigatrain | parity |
 |---|---|---|---|---|---|
-| **gigatrain** | ByteLevel | **7.1 s** ±0% | **543 MB** | — | — |
-| gigatoken | its own | 24.9 s ±4% | 1.1 GB | 3.5x | — |
-| HuggingFace | ByteLevel | 46.7 s ±2% | 1.7 GB | 6.6x | **identical (31,798)** |
-| rustbpe | GPT-4 regex | 71.8 s ±4% | 1.1 GB | 10.1x | — |
-| SentencePiece | its own | 108.4 s ±1% | 3.6 GB | 15.3x | — |
-| **gigatrain** | whitespace | **21.0 s** ±2% | 1.1 GB | — | — |
-| HuggingFace | whitespace | 93.7 s ±3% | 4.3 GB | 4.5x | **identical (25,169)** |
+| **gigatrain** | ByteLevel | **6.7 s** ±3% | **537 MB** | — | — |
+| gigatoken | its own | 25.8 s ±1% | 1.1 GB | 3.9x | — |
+| YouTokenToMe | its own | 26.3 s ±2% | **6.4 GB** | 3.9x | — |
+| HuggingFace | ByteLevel | 46.9 s ±2% | 1.7 GB | 7.0x | **identical (31,798)** |
+| ffbpe | its own | 52.2 s ±4% | 1.2 GB | 7.8x | — |
+| rustbpe | GPT-4 regex | 78.0 s ±4% | 1.1 GB | 11.6x | — |
+| SentencePiece | its own | 108.1 s ±2% | 3.6 GB | 16.1x | — |
 
-**100 MB FineWeb**
+**1 GB whitespace** (like-for-like, verified identical output): gigatrain
+**20.1 s** ±8% / 1.1 GB against HF **101.1 s** ±4% / 4.3 GB — **5.0x on 3.9x
+less memory**, 25,169 merges identical.
+
+**100 MB FineWeb, ByteLevel**
 
 | trainer | wall | peak RSS | vs gigatrain | parity |
 |---|---|---|---|---|
-| **gigatrain** (BL) | **1.5 s** ±7% | **153 MB** | — | — |
-| gigatoken | 7.4 s ±1% | 242 MB | 4.9x | — |
-| rustbpe | 9.0 s ±4% | 390 MB | 6.0x | — |
-| SentencePiece | 15.2 s ±2% | 547 MB | 10.1x | — |
-| HuggingFace (BL) | 16.1 s ±4% | 537 MB | 10.7x | **identical (31,801)** |
-| **gigatrain** (ws) | **3.8 s** ±6% | 260 MB | — | — |
-| HuggingFace (ws) | 27.6 s ±5% | 1.0 GB | 7.3x | **identical (29,299)** |
+| **gigatrain** | **1.5 s** ±2% | **162 MB** | — | — |
+| YouTokenToMe | 6.9 s ±2% | 1.6 GB | 4.6x | — |
+| gigatoken | 7.6 s ±6% | 243 MB | 5.1x | — |
+| ffbpe | 8.1 s ±5% | 393 MB | 5.4x | — |
+| rustbpe | 8.9 s ±5% | 387 MB | 5.9x | — |
+| SentencePiece | 13.8 s ±6% | 548 MB | 9.2x | — |
+| HuggingFace | 16.1 s ±1% | 546 MB | 10.7x | **identical (31,801)** |
 
-**Missing: ffbpe and YouTokenToMe.** Neither is in the Modal image, so neither
-is in this table. Any "fastest" claim is unsupported until they are.
+100 MB whitespace: gigatrain 3.3 s / 260 MB vs HF 26.8 s / 1.0 GB (8.1x),
+29,299 merges identical.
+
+**gigatrain is fastest of all seven at both sizes.** Three caveats belong with
+that: only the HuggingFace rows have verified identical output (the other five
+apply their own pretokenization); rustbpe is ~15% *faster* on single-giant-
+pretoken corpora (see [Degenerate corpora](#degenerate-corpora)); and this is
+one allocation, so the absolute times carry the 20–28% between-allocation
+spread while the ratios do not.
+
+**YouTokenToMe's memory is the outlier nobody reports.** 6.4 GB for a 1 GB
+corpus — 12x gigatrain's, and the highest of any trainer here — while being
+second-fastest. No published trainer benchmark reports memory, so this cost is
+invisible in the literature.
+
+### These numbers reproduce YouTokenToMe's own benchmark
+
+Worth stating because it cuts against this repo's own audit. YouTokenToMe's
+`benchmark.md` reports **25.4 s** for itself and **97.7 s** for HuggingFace on
+1 GB English, on 36 cores. Measured here on 16 cores: **26.3 s** and (whitespace)
+**101.1 s**.
+
+Both reproduce closely. PRIOR_ART.md questions whether their HF baseline was
+inflated by an unreported thread count; the answer appears to be *not much*,
+which is consistent with the 1 GB core-count sweep being shallow (1.34x at 36
+threads). Their benchmark holds up better than that criticism implied.
 
 ## Controlled core-count sweep
 

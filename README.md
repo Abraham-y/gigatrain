@@ -47,9 +47,11 @@ about OOM: gigatrain **47.3 s / 2.9 GB** (ByteLevel), 137.4 s / 7.2 GB
 (whitespace); HuggingFace 730.9 s / 36.3 GB; rustbpe 1216.7 s / 5.8 GB;
 SentencePiece **SIGSEGV**.
 
-**1 GB, one container, all trainers, median of 3** — the only mutually
-comparable table: gigatrain **7.1 s** · gigatoken 24.9 s · HF 46.7 s
-(byte-identical) · rustbpe 71.8 s · SentencePiece 108.4 s.
+**1 GB, one container, all seven trainers, median of 3** — the only mutually
+comparable table: gigatrain **6.7 s** · gigatoken 25.8 s · YouTokenToMe 26.3 s
+· HF 46.9 s (byte-identical) · ffbpe 52.2 s · rustbpe 78.0 s · SentencePiece
+108.1 s. Like-for-like whitespace with verified identical output: **20.1 s vs
+101.1 s (5.0x) on 3.9x less memory.**
 
 **Degenerate corpora** (real genomic FASTA, single-line JSON, minified JS,
 CR-only text): across 20 configurations gigatrain completed **all 20**,
@@ -60,9 +62,11 @@ Full methodology, variance, and the designs that were measured and rejected:
 
 ### What not to claim
 
-**Not "the fastest BPE trainer."** rustbpe is ~15% faster on single-giant-
-pretoken corpora, and ffbpe and YouTokenToMe have never been run in the
-comparable table. The defensible claim is the byte-identical one above.
+**"Fastest of the seven BPE trainers that exist, on web text"** is supported —
+all seven are in the one-session table above. But keep the caveats: only the
+HuggingFace comparison has verified identical output, and **rustbpe is ~15%
+faster on single-giant-pretoken corpora**. The strongest claim remains the
+byte-identical one, because it needs no caveat at all.
 
 Numbers are good to roughly one significant figure: identical configurations
 vary **20–28% between cloud allocations**, against ±2% within a single one.

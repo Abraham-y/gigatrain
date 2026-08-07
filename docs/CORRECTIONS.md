@@ -66,13 +66,21 @@ competitor.
 | between-allocation variance | **40%** | **20–28%** | n=2 accidental preemption vs n=8 verified allocations |
 | "~50x at 100 MB ByteLevel" | quoted | **deleted** | HF's 1 GB *whitespace* time pasted into a 100 MB *ByteLevel* cell; never measured |
 | 12.9 GB laptop run | 104 s / 2.4 GB | 85 s / 2.2 GB | superseded, old figure left in a second file |
-| gigatrain @ 1 GB ByteLevel | 8.5 s / 10.22 s / 14.9 s | **7.1 s** (one-session) | three separate sessions; ratios built on them were never mutually comparable |
+| gigatrain @ 1 GB ByteLevel | 8.5 s / 10.22 s / 14.9 s | **6.7 s** (one-session) | three separate sessions; ratios built on them were never mutually comparable |
 | README figures | 20.3 s, 14.5 s | **deleted** | appeared in no measurement anywhere |
 
-**"Fastest BPE trainer"** is not supported. Best supported: *fastest of the
-five trainers measured on web text.* rustbpe is ~15% faster on single-giant-
-pretoken corpora (`dna_real_oneline` 235.7 s vs 266.8 s), and **ffbpe and
-YouTokenToMe have never been run in the comparable table at all.**
+**"Fastest BPE trainer"** was unsupported while two of the seven trainers had
+never been run. Resolved 2026-08-07: all seven are now in one comparable table
+and gigatrain is fastest at 100 MB and 1 GB. The claim is supportable *with
+caveats* — only the HuggingFace rows have verified identical output, and
+rustbpe is ~15% faster on single-giant-pretoken corpora (`dna_real_oneline`
+235.7 s vs 266.8 s).
+
+Adding the two missing trainers also moved gigatoken's ratio from **3.5x to
+3.9x**, because gigatrain's own baseline shifted 7.1 s → 6.7 s between two
+single-allocation runs — well inside the 20–28% between-allocation spread. A
+reminder that one-container ratios are sound but one-container *absolutes* are
+not.
 
 ---
 

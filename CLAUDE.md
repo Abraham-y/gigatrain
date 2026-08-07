@@ -93,17 +93,22 @@ These are not style preferences; each one exists because it was violated.
 pretokenizer; 19.4 GB in 2.9 GB of RAM against HF's 36.3 GB; completing 20/20
 degenerate configurations where HF does 15/20; PARITY.md as an artifact.
 
+**Defensible with caveats:** "fastest of the seven trainers that exist, on web
+text" — all seven are now in one comparable table. Attach that only the HF rows
+have verified identical output, and that rustbpe is ~15% faster on
+single-giant-pretoken corpora.
+
 **Not defensible:** novelty of the algorithm (Zouhar et al., implemented three
-times over); being first to HF-parity training (gigatoken); "fastest BPE
-trainer" (rustbpe wins on degenerate corpora; ffbpe and YouTokenToMe are
-unmeasured here); reproducing #1313.
+times over); being first to HF-parity training (gigatoken); an unqualified
+"fastest BPE trainer"; reproducing #1313.
 
 ## Outstanding
 
-- Run ffbpe and YouTokenToMe in the one-session table — no "fastest" claim is
-  supportable until then.
 - Interior cut rule for boundary-free input (2.0x, parity-critical, designed).
 - `train_from_iterator` — the Python API takes file paths only, which is the
   biggest adoption gap.
 - No regression test for the scanner-panic deadlock (needs a 4 GiB pretoken).
-- File the phantom-merge bug; comment on HF PR #2066.
+- ~~File the phantom-merge bug~~ filed as
+  [tokenizers#2320](https://github.com/huggingface/tokenizers/issues/2320).
+  Still to do: comment on HF PR #2066 with independent confirmation.
+- Ship it: flip the repo public, tag v0.1.0 for wheels.
