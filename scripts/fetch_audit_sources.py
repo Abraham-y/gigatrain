@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Archive every source the literature audit quotes, with checksums.
 
-A paper about measurement validity should not itself rest on claims the reader
-cannot check. Web pages change and repositories move, so every source quoted in
-docs/literature-audit.md is fetched here, stored verbatim under
+An audit of other people's benchmarks should not itself rest on claims the
+reader cannot check. Web pages change and repositories move, so every source
+quoted in PRIOR_ART.md is fetched here, stored verbatim under
 docs/audit-sources/, and recorded in a manifest with its URL, retrieval
 timestamp and SHA-256.
 
@@ -167,7 +167,7 @@ def main():
 
     with open(MANIFEST, "w") as f:
         json.dump({
-            "note": ("Verbatim sources for docs/literature-audit.md. "
+            "note": ("Verbatim sources for PRIOR_ART.md. "
                      "Re-check with: python scripts/fetch_audit_sources.py --verify"),
             "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "sources": entries,

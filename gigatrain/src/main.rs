@@ -25,10 +25,12 @@
 //! newline under --pretokenizer bytelevel — is buffered whole.
 //!
 //! The cost of that is mostly *time*, not memory: the buffer grows to the
-//! longest boundary-free run (measured at 1.1x the file on a 2 GB one-liner),
-//! but every reader range except the first finds no boundary and retires, so
-//! phase 1 collapses to a single thread. Measured 16.7x slower than the same
-//! bytes with newlines. See docs/degenerate-results.md.
+//! longest boundary-free run (2 GB one-liner peaked at 1.1x the file), but
+//! every reader range except the first finds no boundary and retires, so
+//! phase 1 collapses to a single thread. Measured 2.0x slower than the same
+//! bytes with newlines under ByteLevel; under whitespace the whole file is one
+//! word and a 2 GB case did not finish in an hour. See BENCHMARKS.md,
+//! "Boundary-free input".
 
 use gigatrain::{train, TrainerConfig, WordCounter, WordTable};
 use std::io::Write;

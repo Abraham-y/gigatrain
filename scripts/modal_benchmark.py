@@ -103,7 +103,7 @@ def _prepare_corpora(sizes):
         # without -f writes an HTTP error body to the output path and exits 0,
         # so a 404 previously produced a JSON blob named *.parquet that was
         # then cached forever. The same bug silently corrupted the intrinsic
-        # sweep (see docs/sweep-results.md).
+        # sweep (see docs/CORRECTIONS.md).
         if os.path.exists(path) and _is_parquet(path):
             continue
         if os.path.exists(path):
