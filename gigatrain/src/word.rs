@@ -160,8 +160,8 @@ impl WordArena {
 mod tests {
     use super::*;
 
-    // token_chars large enough for the small IDs used below; the tests that
-    // exercise max_len set the entries they rely on.
+    // track_lens on, so the max_len tests have per-symbol lengths; every
+    // initial symbol covers one source char (see push_word).
     fn arena_of(ids: &[u32]) -> WordArena {
         let mut a = WordArena::with_capacity(1, ids.len(), true);
         a.push_word(ids.iter().copied());

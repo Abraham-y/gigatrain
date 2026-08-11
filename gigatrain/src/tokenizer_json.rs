@@ -9,14 +9,18 @@ use crate::trainer::TrainResult;
 
 /// Escape a string as a JSON string body (without surrounding quotes).
 ///
-/// Emits `\uXXXX` for control characters, which is what `serde_json` does, so
+/// Matches `serde_json` exactly — the two-character escapes `\b`/`\f` for
+/// U+0008/U+000C and `\uXXXX` for the remaining control characters — so
 /// output is byte-comparable with HuggingFace's own serializer for the tokens
-/// a BPE vocabulary can contain.
+/// a BPE vocabulary can contain. (U+0008 is reachable: it is neither `\w` nor
+/// whitespace, so it survives whitespace pretokenization.)
 fn escape(s: &str, out: &mut String) {
     for c in s.chars() {
         match c {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
@@ -61,9 +65,17 @@ pub fn render(
     s.push_str("{\n  \"version\": \"1.0\",\n  \"truncation\": null,\n  \"padding\": null,\n");
 
     // added_tokens: the special tokens, with the ids they were assigned.
+    // Deduplicated: the trainer assigns one id per distinct special, and HF's
+    // AddedVocabulary emits one entry per token, so a repeated --special must
+    // not produce two identical objects here.
     s.push_str("  \"added_tokens\": [");
     let mut first = true;
+    let mut seen: Vec<&str> = Vec::with_capacity(special_tokens.len());
     for token in special_tokens {
+        if seen.contains(&token.as_str()) {
+            continue;
+        }
+        seen.push(token);
         if let Some(id) = result.vocab.iter().position(|t| t == token) {
             if !first {
                 s.push(',');

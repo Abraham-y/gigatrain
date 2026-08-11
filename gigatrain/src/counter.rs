@@ -67,6 +67,7 @@ impl WordCounter {
             }
             // Distinct word with a colliding hash: prepend to the chain.
             let new_id = self.table.len() as u32;
+            assert!(new_id != NONE, "more than u32::MAX-1 unique words");
             self.table.push(word, count);
             self.next.push(head);
             self.index.insert(h, new_id);

@@ -259,21 +259,33 @@ def parity_at_scale(size_mb: int = 13000, pretokenizer: str = "whitespace",
     pt_gt = f"--pretokenizer {pretokenizer}"
     pt_hf = f"--pretokenizer {pretokenizer}"
 
+    # Remove any merge lists left by a previous invocation in a warm
+    # container: a failed trainer must not silently compare a stale (or
+    # empty-vs-empty) pair of files as IDENTICAL.
+    for f in ("/tmp/ours.merges", "/tmp/hf.merges"):
+        if os.path.exists(f):
+            os.remove(f)
+
     print(f"=== gigatrain ({pretokenizer}, vocab {vocab_size})", flush=True)
-    ours, ours_s, _ = _measure(
+    ours, ours_peak, ours_rc = _measure(
         "gigatrain", size_mb,
         f"{gt} --vocab-size {vocab_size} {special} {pt_gt} {corpus} > /tmp/ours.merges",
     )
     print(f"=== HuggingFace ({pretokenizer}) — this is the slow one", flush=True)
-    theirs, theirs_s, _ = _measure(
+    theirs, theirs_peak, theirs_rc = _measure(
         "hf", size_mb,
         f"python3 /repo/scripts/hf_train_cli.py --vocab-size {vocab_size} "
         f"{special} {pt_hf} {corpus} > /tmp/hf.merges",
     )
+    if ours_rc != 0 or theirs_rc != 0:
+        raise RuntimeError(
+            f"trainer failed (gigatrain rc={ours_rc}, hf rc={theirs_rc}); "
+            "refusing to report a parity verdict from a failed run"
+        )
 
     a = open("/tmp/ours.merges").read().splitlines()
     b = open("/tmp/hf.merges").read().splitlines()
-    identical = a == b
+    identical = a == b and len(a) > 0
     first_diff = None
     for i, (x, y) in enumerate(zip(a, b)):
         if x != y:
@@ -500,11 +512,12 @@ def threads(size_mb: int = 100, vocab_size: int = 32000,
 def one_session(sizes, vocab_size: int, timeout: int, repeats: int):
     """Every trainer, every size, ONE container, one page cache, repeats.
 
-    BENCHMARKS.md and PRIOR_ART.md currently record gigatrain's own 1 GB
-    ByteLevel time as 8.5 s, 10.22 s and 14.9 s in three different tables,
-    because each competitor was benchmarked in its own session under different
-    background load. None of the published ratios are therefore comparable to
-    each other. This produces one table where they are.
+    Before this existed, the docs recorded gigatrain's own 1 GB ByteLevel time
+    three different ways (8.5 s, 10.22 s, 14.9 s — since moved to
+    docs/CORRECTIONS.md), because each competitor was benchmarked in its own
+    session under different background load, making the published ratios
+    mutually incomparable. This produces one table where they are comparable;
+    BENCHMARKS.md's "One-session comparison" is its output.
     """
     import os
 

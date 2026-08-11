@@ -21,8 +21,9 @@ readers ──chunks──> scanners ──packed batches──> shard owners
   every ASCII whitespace char satisfies `char::is_whitespace`. Nothing is ever
   fully resident.
 - **scanners** split each chunk into words (`split.rs`), hash each word once,
-  and route it to shard `hash % N`, packing into per-shard `WordBatch`
-  buffers shipped at 64 KB.
+  and route it to shard `(hash >> 32) % owners` (high bits, since the low bits
+  also pick the hash-table slot), packing into per-shard `WordBatch` buffers
+  shipped at a per-scanner budget of `(4 MB / threads).clamp(4 KB, 64 KB)`.
 - **shard owners** count their shard into a `WordCounter`. The thread budget
   is split between scanners and owners rather than sizing both at `nthreads`,
   which measurably oversubscribed a 64-core machine. Shards are disjoint,
@@ -30,7 +31,7 @@ readers ──chunks──> scanners ──packed batches──> shard owners
   combine is a concatenation with no lookups and no merge.
 
 Two simpler designs were measured and rejected; the rationale, with numbers,
-is in the doc comment on `count_words_parallel` and in BENCHMARKS.md. The
+is in the doc comment on `count_words` (`pipeline.rs`) and in BENCHMARKS.md. The
 short version: per-worker maps are fast but store every frequent word N times
 and then merge single-threaded; broadcasting chunks fixes memory but
 replicates scanning and hashing per worker, leaving a fixed Amdahl floor.
@@ -70,10 +71,13 @@ memory layout, not parallelism.
   IDs with per-word (start, len). **A merge only ever shrinks a word**, so
   slice starts are fixed for the whole run: the arena never reallocates and
   never needs compaction.
-- HF's per-symbol `len` field is gone. It always equals the char count of the
-  symbol's token string, so it lives in a dense `token_chars` table indexed by
-  token ID — symbols are bare u32s, halving the arena and the bytes the hot
-  scan touches.
+- HF's per-symbol `len` field (source chars covered) is stored only when
+  `max_token_length` — its sole consumer — is set, as a `sym_lens` array
+  parallel to the symbols; otherwise symbols are bare u32s and the hot scan
+  touches half the bytes. A per-token-ID lookup table would be smaller still,
+  but is wrong under decoration: with `continuing_subword_prefix` set, one
+  token ID can cover one source char as an initial symbol and several as a
+  merged token (see the module comment in `word.rs`).
 - Position lists are `Vec<u32>` (not `HashSet`), deduped on push: within one
   merge step words are processed one at a time, so duplicate inserts for a
   pair are always adjacent. Spent buffers are recycled through a pool.

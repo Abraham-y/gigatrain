@@ -187,6 +187,16 @@ fn main() {
             }
             acc.add(word, count);
         }
+        // Duplicate words are summed, so the per-line check above is not
+        // enough: two large lines for the same word can overflow i64 in the
+        // sum even though each passed individually.
+        if let Some((word, total)) = acc.iter().find(|&(_, c)| c > i64::MAX as u64) {
+            die(&format!(
+                "--words-tsv counts for {word:?} sum to {total}, which exceeds \
+                 the maximum supported ({}); merge counts are i64 internally",
+                i64::MAX
+            ));
+        }
         acc.into_table()
     } else {
         if inputs.is_empty() {

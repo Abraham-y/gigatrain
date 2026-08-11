@@ -79,7 +79,8 @@ jobs:
           name: wheels-ubuntu-latest-x86_64
           path: dist
       - run: pip install tokenizers==0.22.2 && pip install --no-index --find-links dist gigatrain
-      - run: curl -sL -o /tmp/wp.txt https://www.gutenberg.org/files/2600/2600-0.txt
+      # -f: an HTTP error must fail the step, not feed an error page to the check
+      - run: curl -fsSL -o /tmp/wp.txt https://www.gutenberg.org/files/2600/2600-0.txt
       - run: python scripts/check_bindings.py /tmp/wp.txt
 
   publish:

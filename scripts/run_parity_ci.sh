@@ -40,10 +40,24 @@ EOF
 fi
 
 echo "== fetching real corpora =="
-[ -f "$WORK/war_and_peace.txt" ] || \
-  curl -sL -o "$WORK/war_and_peace.txt" https://www.gutenberg.org/files/2600/2600-0.txt
-[ -f "$WORK/hongloumeng.txt" ] || \
-  curl -sL -o "$WORK/hongloumeng.txt" https://www.gutenberg.org/cache/epub/24264/pg24264.txt
+# -f so an HTTP error fails the fetch instead of writing the error body to the
+# corpus file, and download-to-temp so a failed fetch is never cached: an error
+# page trains both sides identically and passes the gate while testing nothing
+# (the curl-without--f incident in docs/CORRECTIONS.md, section D).
+fetch() {
+  # fetch DEST URL MIN_BYTES
+  [ -f "$1" ] && return 0
+  curl -fsSL -o "$1.part" "$2"
+  actual=$(wc -c < "$1.part")
+  if [ "$actual" -lt "$3" ]; then
+    echo "error: $2 returned $actual bytes (< $3); refusing to use it" >&2
+    rm -f "$1.part"
+    exit 1
+  fi
+  mv "$1.part" "$1"
+}
+fetch "$WORK/war_and_peace.txt" https://www.gutenberg.org/files/2600/2600-0.txt 3000000
+fetch "$WORK/hongloumeng.txt" https://www.gutenberg.org/cache/epub/24264/pg24264.txt 800000
 
 echo "== parity: synthetic, 32k vocab, special tokens =="
 "$PYTHON" scripts/parity_check.py --files "$WORK/synth.txt" --vocab-size 32000 \
@@ -74,7 +88,7 @@ echo "== parity: ByteLevel multilingual (en+zh) =="
   --vocab-size 8000 --pretokenizer bytelevel
 
 echo "== ByteLevel pretokenizer differential vs HF (BMP sweep + corpora) =="
-"$PYTHON" scripts/check_bytelevel_parity.py "$WORK/war_and_peace.txt"
+"$PYTHON" scripts/check_bytelevel_parity.py "$WORK/war_and_peace.txt" "$WORK/hongloumeng.txt"
 
 echo "== determinism: output must not depend on thread count =="
 GT=gigatrain/target/release/gigatrain

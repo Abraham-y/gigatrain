@@ -11,12 +11,22 @@ use crate::trainer::{train, TrainerConfig};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-fn resolve_threads(threads: Option<usize>) -> usize {
-    threads.filter(|&t| t > 0).unwrap_or_else(|| {
+fn resolve_threads(threads: Option<usize>) -> PyResult<usize> {
+    // Same bound the CLI enforces: reject rather than silently clamp, so the
+    // two frontends behave identically.
+    if let Some(t) = threads {
+        if t > crate::pipeline::MAX_WORKERS {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "threads {t} exceeds the maximum supported ({})",
+                crate::pipeline::MAX_WORKERS
+            )));
+        }
+    }
+    Ok(threads.filter(|&t| t > 0).unwrap_or_else(|| {
         std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1)
-    })
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -97,7 +107,7 @@ fn train_bpe(
         continuing_subword_prefix.clone(),
         end_of_word_suffix.clone(),
     );
-    let nthreads = resolve_threads(threads);
+    let nthreads = resolve_threads(threads)?;
 
     // Training is pure Rust and can take minutes; release the GIL so other
     // Python threads keep running.
@@ -159,7 +169,7 @@ fn train_tokenizer(
         continuing_subword_prefix.clone(),
         end_of_word_suffix.clone(),
     );
-    let nthreads = resolve_threads(threads);
+    let nthreads = resolve_threads(threads)?;
 
     let json = py.detach(move || {
         let table = crate::pipeline::count_words(&files, nthreads, bytelevel)?;

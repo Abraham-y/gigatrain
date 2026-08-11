@@ -6,8 +6,9 @@ its `(?!\\S)` lookahead), so it is verified by diffing against HF's own output
 rather than by reading it. Checks:
 
 1. handcrafted edge cases around spaces, contractions and boundaries
-2. every non-surrogate BMP codepoint in several contexts, to catch category
-   misclassification (\\p{L} vs Alphabetic, Nl, Other_Alphabetic, ...)
+2. every BMP codepoint from U+0020 up (surrogates excluded) in several
+   contexts, to catch category misclassification (\\p{L} vs Alphabetic, Nl,
+   Other_Alphabetic, ...); C0 controls appear only in the edge cases above
 3. real corpus text, line by line
 
 Cases are batched through `pretok --lines` so the whole sweep is one process.

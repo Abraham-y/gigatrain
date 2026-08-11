@@ -30,9 +30,11 @@ fourth in line with the weakest case. See docs/CORRECTIONS.md for all of it.
 
 ## What to do instead
 
-**1. File the phantom-merge bug upstream.** The single unambiguously novel
-result in the project, ~1 hour, and a real contribution to a widely-used
-library. See docs/upstream-issues.md.
+**1. ~~File the phantom-merge bug upstream.~~ Done 2026-08-07:**
+[tokenizers#2320](https://github.com/huggingface/tokenizers/issues/2320),
+verified against 0.23.1. The single unambiguously novel result in the project.
+Still open: comment on HF PR #2066 with independent confirmation. See
+docs/upstream-issues.md.
 
 **2. Ship it.** Flip the repo public, tag `v0.1.0` so wheels build. ~30 min.
 
@@ -60,15 +62,20 @@ fooled myself measuring it."* Structure:
   laptop that turned out to be running someone else's training job.
 
 **4. X thread** pointing at the blog. Lead with the byte-identical 12.9 GB row.
-**Not** "fastest" — that invites an immediate and correct correction, since
-rustbpe wins on degenerate corpora and ffbpe/YouTokenToMe are unmeasured.
+**Not** an unqualified "fastest": since 2026-08-07 all seven trainers are in
+one comparable table (BENCHMARKS.md, "One-session comparison") and "fastest of
+the seven, on web text" is supportable — but only with its caveats attached
+(only the HF rows have verified identical output; rustbpe is ~15% faster on
+single-giant-pretoken corpora), and a caveated claim makes a weak lead. The
+byte-identical claim needs no caveat at all.
 
 **5. Email Marcel Rød** about gigatoken's CRLF divergence. It is a real bug
 report and the courteous thing to do before publishing a comparison.
 
 ## Things to leave out
 
-- Any "fastest BPE trainer" claim.
+- Any *unqualified* "fastest BPE trainer" claim (the caveated seven-trainer
+  version is supportable but belongs in the body, not the headline).
 - The 17.2x, 22.3x and ~50x figures (different pretokenizers, or unmeasured).
 - Any claim of reproducing, explaining, or first-diagnosing #1313.
 - The retracted vocabulary-scaling sweep, except as a cautionary anecdote.

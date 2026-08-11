@@ -99,8 +99,9 @@ document does not exist anywhere else, including HuggingFace's own docs.
 - seven corpus configurations: 32k vocab, special tokens that collide with
   merge strings, `max_token_length`, `min_frequency`, `limit_alphabet`,
   English + Chinese, and ByteLevel
-- the ByteLevel pretokenizer diffed against HF over every non-surrogate BMP
-  codepoint in 8 contexts (~508k cases), plus real corpora
+- the ByteLevel pretokenizer diffed against HF over every BMP codepoint from
+  U+0020 up (surrogates excluded) in 8 contexts (~508k cases) plus handcrafted
+  control-character edge cases, and two real corpora (English + Chinese)
 - 1000 randomized fuzz trials biased toward count ties and same-char runs
 - **vocabularies** diffed alongside merge lists
 - output identical across 1, 2, 3, 7 and 16 threads; decorated modes checked
@@ -205,7 +206,7 @@ everyone expects to be the hazard was 1 MB.
 | [PRIOR_ART.md](PRIOR_ART.md) | competitors, and an audit of what their benchmarks report |
 | [docs/CORRECTIONS.md](docs/CORRECTIONS.md) | every claim withdrawn, and why |
 | [docs/publishing.md](docs/publishing.md) | ship/blog plan and the decision not to submit a paper |
-| [docs/upstream-issues.md](docs/upstream-issues.md) | the phantom-merge bug to file |
+| [docs/upstream-issues.md](docs/upstream-issues.md) | the phantom-merge bug, filed as [tokenizers#2320](https://github.com/huggingface/tokenizers/issues/2320) |
 | [docs/audit-sources/](docs/audit-sources/) | archived, checksummed sources for every quote |
 
 ## License

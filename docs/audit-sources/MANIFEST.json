@@ -1,5 +1,5 @@
 {
-  "note": "Verbatim sources for docs/literature-audit.md. Re-check with: python scripts/fetch_audit_sources.py --verify",
+  "note": "Verbatim sources for PRIOR_ART.md. Re-check with: python scripts/fetch_audit_sources.py --verify",
   "generated_utc": "2026-08-05T07:30:16+00:00",
   "sources": [
     {

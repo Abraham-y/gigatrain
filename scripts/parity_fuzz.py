@@ -65,8 +65,10 @@ def ours_train(table, vocab_size, max_token_length):
     cmd = [str(GIGATRAIN), "--vocab-size", str(vocab_size), "--words-tsv", path]
     if max_token_length is not None:
         cmd += ["--max-token-length", str(max_token_length)]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    Path(path).unlink()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    finally:
+        Path(path).unlink()
     merges = []
     for line in proc.stdout.splitlines():
         a, _, b = line.partition(" ")

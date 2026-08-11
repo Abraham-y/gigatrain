@@ -67,5 +67,6 @@ jobs:
       - run: pip install tokenizers==0.22.2 maturin
       - run: maturin build --release --features python --manifest-path gigatrain/Cargo.toml
       - run: pip install --find-links gigatrain/target/wheels gigatrain
-      - run: curl -sL -o /tmp/wp.txt https://www.gutenberg.org/files/2600/2600-0.txt
+      # -f: an HTTP error must fail the step, not feed an error page to the check
+      - run: curl -fsSL -o /tmp/wp.txt https://www.gutenberg.org/files/2600/2600-0.txt
       - run: python scripts/check_bindings.py /tmp/wp.txt

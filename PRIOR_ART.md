@@ -46,10 +46,13 @@ the `Symbol {prev, next, len}` linked list this project lists as future work.
 
 **The scaling question was already answered.** Reddy et al.
 ([arXiv:2502.20273](https://arxiv.org/abs/2502.20273)) trained BPE, UnigramLM
-and WordPiece from 1 GB to 900 GB (English) and 600 GB (Russian), reporting
-diminishing returns beyond ~150 GB / ~200 GB, and shared vocabulary against the
-900 GB reference rising "from approximately 58% to 97% for BPE". This repo's
-own sweep re-measured that at 90x smaller scale, badly, and retracted it.
+and WordPiece from 1 GB to 900 GB (English), reporting diminishing returns
+beyond ~150 GB / ~200 GB. The Russian corpus size (600 GB) and the shared-
+vocabulary figure ("from approximately 58% to 97% for BPE") are from the paper
+body, which is **not** in the archive — only the abstract page is
+(`reddy-scaling-abs.html`); re-verify against the paper before quoting them
+onward. This repo's own sweep re-measured that question at 90x smaller scale,
+badly, and retracted it.
 
 **No major lab trains its own BPE.** OLMo 3 reuses OLMo 2's cl100k-derived
 vocab; gpt-neox wraps HF; Llama 4, DeepSeek, Mistral and Qwen 3 ship no trainer
@@ -112,9 +115,12 @@ because excluding it would be the kind of thing this audit exists to catch.
 encoding throughput; rustbpe claims only "fast training with parallel
 processing" with no numbers.
 
-**Tallies: peak memory 2/6, output correctness 3/6, timing variance 0/6** — in
-a field whose canonical failure (#1681, #1795, #1824, sentencepiece#1021) is
-OOM. Four of six do not measure the axis that is failing.
+**Tallies, over the five scored benchmarks** (four external plus gigatrain's
+own pre-August one): **peak memory 2/5, output correctness 3/5, timing
+variance 0/5** — in a field whose canonical failure (#1681, #1795, #1824,
+sentencepiece#1021) is OOM. Three of the four external benchmarks do not
+measure the axis that is failing, and two further tools (gigatoken, rustbpe)
+publish no trainer benchmark at all.
 
 **The thread-count defect is in the most-cited benchmark — but it cost them
 little.** YouTokenToMe states its hardware (36-core Xeon) and its own thread
@@ -125,8 +131,9 @@ defect until August 2026.
 
 **However, their numbers reproduce.** Their benchmark reports 25.4 s for
 YouTokenToMe and 97.7 s for HuggingFace on 1 GB English at 36 cores. Run here
-on 16 cores: **26.3 s** and **101.1 s** (see BENCHMARKS.md, "One-session
-comparison"). An earlier draft of this section implied their HF baseline was
+on 16 cores: **26.3 s** and, for HF under *whitespace* — the config comparable
+to their HF baseline — **101.1 s** (the same session's HF **ByteLevel** row is
+46.9 s; see BENCHMARKS.md, "One-session comparison"). An earlier draft of this section implied their HF baseline was
 materially inflated by the unreported thread setting; the measurement says
 otherwise, consistent with the 1 GB core-count curve being shallow (1.34x at
 36 threads).
@@ -164,8 +171,11 @@ surfaces in the manifest were read.
 > layout, and a parity specification that does not exist elsewhere.
 
 **Do not claim:** novelty of the algorithm, being first to HF-parity training
-(gigatoken), reproducing #1313, or "fastest BPE trainer" (rustbpe wins on
-degenerate corpora; ffbpe and YouTokenToMe are unmeasured here).
+(gigatoken), reproducing #1313, or an *unqualified* "fastest BPE trainer".
+"Fastest of the seven, on web text" is supportable since 2026-08-07 (all seven
+are in the one-session table) but only with its caveats: just the HF rows have
+verified identical output, and rustbpe is ~15% faster on single-giant-pretoken
+corpora.
 
 Possibly the strongest artifact is [PARITY.md](PARITY.md) itself — HF's exact
 semantics, including `limit_alphabet` nondeterminism, the `max_token_length`

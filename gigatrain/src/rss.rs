@@ -4,7 +4,9 @@
 //! handful of times per training run, gated behind the env var.
 
 pub fn enabled() -> bool {
-    std::env::var_os("GIGATRAIN_STATS").is_some()
+    // The documented spelling is GIGATRAIN_STATS=1; treat "0" and the empty
+    // string as off rather than keying on mere presence.
+    std::env::var_os("GIGATRAIN_STATS").is_some_and(|v| !v.is_empty() && v != "0")
 }
 
 /// Current resident set size in bytes, or None if unavailable.

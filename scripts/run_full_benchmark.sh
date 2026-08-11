@@ -2,10 +2,10 @@
 # Self-contained benchmark: gigatrain vs HuggingFace tokenizers, rustbpe and
 # SentencePiece, on FineWeb slices. Downloads its own data.
 #
-# Everything published in BENCHMARKS.md came from one 10-core macOS laptop.
-# This script exists so the numbers can be reproduced elsewhere — in
-# particular on a many-core Linux box, where the thread scaling and the
-# allocator behaviour are both expected to differ.
+# Everything quoted in BENCHMARKS.md came from isolated cloud containers via
+# scripts/modal_benchmark.py; this script exists so the numbers can be
+# reproduced on any single box without Modal. Thread scaling and allocator
+# behaviour are both expected to differ across machines.
 #
 # Usage:
 #   bash scripts/run_full_benchmark.sh [WORKDIR] [SIZES_MB...]
@@ -59,12 +59,21 @@ log "preparing corpora"
 mkdir -p "$WORK/data"
 LARGEST=0
 for mb in "${SIZES[@]}"; do [ "$mb" -gt "$LARGEST" ] && LARGEST=$mb; done
-# Each FineWeb parquet is ~2 GB and yields ~4-5 GB of text.
-NPARQ=$(( (LARGEST / 4000) + 1 ))
+# Each FineWeb parquet is ~2 GB and yields ~3.2 GB of text (measured; the
+# 4-5 GB estimate undersized the 20 GB corpus once — see BENCHMARKS.md).
+NPARQ=$(( (LARGEST / 3000) + 1 ))
 for i in $(seq 0 $((NPARQ - 1))); do
     f="$WORK/data/fineweb_$(printf '%03d' $i).parquet"
-    [ -f "$f" ] || curl -sL -o "$f" \
-      "https://huggingface.co/datasets/HuggingFaceFW/fineweb/resolve/main/sample/10BT/$(printf '%03d' $i)_00000.parquet"
+    if [ ! -f "$f" ]; then
+        # -f + temp-then-move + magic check: an HTTP error body cached as a
+        # .parquet once corrupted a whole sweep (docs/CORRECTIONS.md, D).
+        curl -fsSL -o "$f.part" \
+          "https://huggingface.co/datasets/HuggingFaceFW/fineweb/resolve/main/sample/10BT/$(printf '%03d' $i)_00000.parquet" \
+          || { echo "error: download failed for $f"; rm -f "$f.part"; exit 1; }
+        [ "$(head -c 4 "$f.part")" = "PAR1" ] \
+          || { echo "error: $f.part is not a parquet file"; rm -f "$f.part"; exit 1; }
+        mv "$f.part" "$f"
+    fi
 done
 python3 "$REPO/scripts/slice_fineweb.py" "$WORK"/data/*.parquet \
     --sizes-mb "${SIZES[@]}" --out-dir "$WORK/data"
@@ -72,8 +81,16 @@ python3 "$REPO/scripts/slice_fineweb.py" "$WORK"/data/*.parquet \
 # ------------------------------------------------------------------ measure
 # record TOOL SIZE SECONDS PEAK_KB
 measure() {
-    local tool=$1 size=$2 out; shift 2
+    local tool=$1 size=$2 out rc; shift 2
     out=$("${TIMER[@]}" "$@" 2>&1 >/dev/null)
+    rc=$?
+    # A crashed or OOM-killed trainer must not be recorded as a timing row
+    # (standing rule 5: only a timeout may print as a timeout, and only a
+    # measurement may print as a measurement).
+    if [ $rc -ne 0 ]; then
+        printf '%s\t%s\tFAILED(rc=%s)\tNA\n' "$tool" "$size" "$rc" | tee -a "$RESULTS"
+        return
+    fi
     local secs peak
     if [ "$(uname)" = "Linux" ]; then
         secs=$(grep -o 'Elapsed (wall clock).*' <<<"$out" | awk '{print $NF}')
