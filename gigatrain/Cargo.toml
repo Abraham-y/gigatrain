@@ -17,7 +17,9 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # Optional so the core crate stays dependency-free; enabled by the `python`
 # feature, which is what maturin builds.
-pyo3 = { version = "0.27", features = ["extension-module"], optional = true }
+# generate-import-lib: Windows CI builds wheels for interpreters that are not
+# installed on the runner; a no-op on other targets.
+pyo3 = { version = "0.27", features = ["extension-module", "generate-import-lib"], optional = true }
 
 [features]
 python = ["dep:pyo3"]
