@@ -111,4 +111,11 @@ times over); being first to HF-parity training (gigatoken); an unqualified
 - ~~File the phantom-merge bug~~ filed as
   [tokenizers#2320](https://github.com/huggingface/tokenizers/issues/2320).
   Still to do: comment on HF PR #2066 with independent confirmation.
-- Ship it: flip the repo public, tag v0.1.0 for wheels.
+- ~~Ship it~~ published 2026-08-13: `pip install gigabpe`
+  ([PyPI](https://pypi.org/project/gigabpe/)), v0.1.0, 30 wheels (CPython
+  3.9–3.14 × Linux x86_64/aarch64, macOS arm64/x86_64, Windows x64) plus
+  sdist, via Trusted Publishing. Verified from real PyPI in a clean venv:
+  byte-identical to HF in both pretokenizer modes.
+- The name is **gigabpe**, not gigatrain. PyPI's similarity check squashes
+  separators, so `gigatrain` collided with GigaAI's existing `giga-train`
+  training framework. Renamed 2026-08-13 (commit 4e8afa5) before publishing.

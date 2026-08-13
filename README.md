@@ -122,6 +122,14 @@ undecorated modes.
 ## Usage
 
 ```bash
+pip install gigabpe
+```
+
+Wheels cover CPython 3.9–3.14 on Linux (x86_64, aarch64), macOS (arm64,
+x86_64) and Windows (x64). Anything else builds from the sdist and needs a
+Rust toolchain. To build from a checkout instead:
+
+```bash
 pip install maturin
 maturin build --release --features python --manifest-path gigabpe/Cargo.toml
 pip install --find-links gigabpe/target/wheels gigabpe
@@ -193,8 +201,7 @@ everyone expects to be the hazard was 1 MB.
   any single HF run is ~99.6% of merges.
 - **Peak RSS depends on the allocator**; macOS libmalloc is slow to return
   freed pages.
-- **Scope.** No Unigram/SentencePiece model. Wheels build on a version tag but
-  nothing is published to PyPI yet.
+- **Scope.** No Unigram/SentencePiece model.
 
 ## Repository map
 

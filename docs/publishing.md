@@ -36,7 +36,22 @@ verified against 0.23.1. The single unambiguously novel result in the project.
 Still open: comment on HF PR #2066 with independent confirmation. See
 docs/upstream-issues.md.
 
-**2. Ship it.** Flip the repo public, tag `v0.1.0` so wheels build. ~30 min.
+**2. ~~Ship it.~~ Done 2026-08-13:** public, v0.1.0, and on PyPI as
+`pip install gigabpe` — 30 wheels (CPython 3.9–3.14 across Linux
+x86_64/aarch64, macOS arm64/x86_64, Windows x64) plus sdist, published by
+Trusted Publishing with no stored token. Verified by installing from real
+PyPI into a clean venv and re-running `check_bindings.py`: byte-identical to
+HF in both pretokenizer modes.
+
+Two things cost more than the "~30 min" estimated here, both worth
+remembering. Packaging metadata is **immutable per version on PyPI**, so
+`requires-python` and the interpreter matrix had to be right *before* the
+name was claimed, not in a 0.1.1 — the matrix was missing Python 3.14
+entirely. And the name **had to change**: PyPI's similarity check squashes
+separators, so `gigatrain` collided with `giga-train`, which is GigaAI's
+active "GigaTrain" model-training framework. That clash would have followed
+the blog post and the X thread, so catching it before publication rather
+than after was the fortunate part.
 
 **3. Blog post.** Most of it is already written across BENCHMARKS.md,
 PARITY.md, PRIOR_ART.md and CORRECTIONS.md.
