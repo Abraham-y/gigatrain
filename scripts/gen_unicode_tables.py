@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate gigatrain/src/unicode_tables.rs.
+"""Regenerate gigabpe/src/unicode_tables.rs.
 
 The tables define the regex classes \\p{L} and \\p{N} as used by the GPT-2
 pretokenizer pattern. They are derived from HuggingFace's own ByteLevel
@@ -19,7 +19,7 @@ Rust's char::is_alphabetic (the Alphabetic property) is not \\p{L}: it also
 covers Nl and Other_Alphabetic, so it cannot be substituted.
 
 Usage:
-  python3 scripts/gen_unicode_tables.py > gigatrain/src/unicode_tables.rs
+  python3 scripts/gen_unicode_tables.py > gigabpe/src/unicode_tables.rs
 """
 import sys
 

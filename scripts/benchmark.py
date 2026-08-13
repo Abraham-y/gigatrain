@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark gigatrain vs HF tokenizers' BpeTrainer on the same files.
+"""Benchmark gigabpe vs HF tokenizers' BpeTrainer on the same files.
 
 Per CLAUDE.md benchmarking rules, reports wall time, peak RSS, and merge-list
 parity together — a speedup with different output is not a speedup. Each
@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-GIGATRAIN = ROOT / "gigatrain" / "target" / "release" / "gigatrain"
+GIGABPE = ROOT / "gigabpe" / "target" / "release" / "gigabpe"
 HF_CLI = ROOT / "scripts" / "hf_train_cli.py"
 
 
@@ -61,7 +61,7 @@ def main():
     p.add_argument("--special", action="append", default=[])
     p.add_argument("--max-token-length", type=int, default=None)
     p.add_argument("--skip-hf", action="store_true",
-                   help="only run gigatrain (for sizes where HF is impractical)")
+                   help="only run gigabpe (for sizes where HF is impractical)")
     p.add_argument("--out-dir", default=None)
     args = p.parse_args()
 
@@ -79,9 +79,9 @@ def main():
           f"vocab_size={args.vocab_size}", file=sys.stderr)
 
     ours_merges = out_dir / f"ours_{tag}.merges"
-    print("running gigatrain...", file=sys.stderr)
+    print("running gigabpe...", file=sys.stderr)
     ours_wall, ours_rss, ours_err = run_timed(
-        [str(GIGATRAIN)] + common + args.files, ours_merges
+        [str(GIGABPE)] + common + args.files, ours_merges
     )
     stats = [l for l in ours_err.splitlines() if "phase1" in l]
     if stats:
@@ -100,7 +100,7 @@ def main():
 
     print()
     print(f"{'':>12} {'wall':>10} {'peak RSS':>10}")
-    print(f"{'gigatrain':>12} {ours_wall:>9.1f}s {fmt_bytes(ours_rss):>10}")
+    print(f"{'gigabpe':>12} {ours_wall:>9.1f}s {fmt_bytes(ours_rss):>10}")
     if hf_wall is not None:
         print(f"{'HF':>12} {hf_wall:>9.1f}s {fmt_bytes(hf_rss):>10}")
         print(f"\nspeedup: {hf_wall / ours_wall:.1f}x   parity: "

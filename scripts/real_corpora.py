@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 
 MB = 1 << 20
-UA = {"User-Agent": "gigatrain-benchmark/0.1 (+https://github.com/Abraham-y/gigatrain)"}
+UA = {"User-Agent": "gigabpe-benchmark/0.1 (+https://github.com/Abraham-y/gigabpe)"}
 
 
 def _get(url, timeout=600):

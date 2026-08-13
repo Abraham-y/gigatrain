@@ -1,4 +1,4 @@
-# gigatrain
+# gigabpe
 
 Fast BPE tokenizer **training** with byte-exact HuggingFace `tokenizers`
 parity.
@@ -24,7 +24,7 @@ the incumbents run out of memory before they run out of time:
   31.2 GB, vocab 4096, **1.8 TB** of memory, unfinished at 24 hours.
 
 Measured here, HuggingFace needs **1.9x the corpus size in RAM**. That is the
-mechanism behind #1681. gigatrain needs 0.15x.
+mechanism behind #1681. gigabpe needs 0.15x.
 
 **This is not a new algorithm.** Incremental pair counts with an inverted index
 and a lazy heap is standard, formalized by
@@ -37,24 +37,24 @@ architecture, memory layout, and an unusually thorough parity contract.
 **12.9 GB FineWeb, vocab 32000, 16 cores — the headline, same pretokenizer
 both sides:**
 
-| pretokenizer | merges | gigatrain | HF | identical |
+| pretokenizer | merges | gigabpe | HF | identical |
 |---|---|---|---|---|
 | ByteLevel | 31,790 | **38.0 s** | 257.1 s | yes |
 | whitespace | 16,969 | **107.8 s** | 496.9 s | yes |
 
 **19.4 GB on 16 cores / 64 GiB** — a deliberately modest box, since #1681 is
-about OOM: gigatrain **47.3 s / 2.9 GB** (ByteLevel), 137.4 s / 7.2 GB
+about OOM: gigabpe **47.3 s / 2.9 GB** (ByteLevel), 137.4 s / 7.2 GB
 (whitespace); HuggingFace 730.9 s / 36.3 GB; rustbpe 1216.7 s / 5.8 GB;
 SentencePiece **SIGSEGV**.
 
 **1 GB, one container, all seven trainers, median of 3** — the only mutually
-comparable table: gigatrain **6.7 s** · gigatoken 25.8 s · YouTokenToMe 26.3 s
+comparable table: gigabpe **6.7 s** · gigatoken 25.8 s · YouTokenToMe 26.3 s
 · HF 46.9 s (byte-identical) · ffbpe 52.2 s · rustbpe 78.0 s · SentencePiece
 108.1 s. Like-for-like whitespace with verified identical output: **20.1 s vs
 101.1 s (5.0x) on 3.9x less memory.**
 
 **Degenerate corpora** (real genomic FASTA, single-line JSON, minified JS,
-CR-only text): across 20 configurations gigatrain completed **all 20**,
+CR-only text): across 20 configurations gigabpe completed **all 20**,
 HuggingFace **15**, and every one of the 15 was byte-identical.
 
 Full methodology, variance, and the designs that were measured and rejected:
@@ -78,7 +78,7 @@ One box, one binary, one corpus, varying only `RAYON_NUM_THREADS`:
 | threads | 1 | 4 | 16 | 32 | 64 |
 |---|---|---|---|---|---|
 | HF @ 1 GB | 134.6 s | 79.9 s | **66.0 s** | 83.9 s | 156.8 s |
-| gigatrain | 22.2 s | 16.5 s | 14.5 s | 14.5 s | 14.3 s |
+| gigabpe | 22.2 s | 16.5 s | 14.5 s | 14.5 s | 14.3 s |
 
 U-shaped, with the optimum moving with corpus size (4 threads at 100 MB, 16 at
 1 GB). Its rayon-parallel pair counting reduces per-thread hash maps, so more
@@ -106,7 +106,7 @@ document does not exist anywhere else, including HuggingFace's own docs.
 - **vocabularies** diffed alongside merge lists
 - output identical across 1, 2, 3, 7 and 16 threads; decorated modes checked
   for reproducibility at 1, 4, 16
-- parallel range readers forced on a small corpus via `GIGATRAIN_MIN_RANGE`
+- parallel range readers forced on a small corpus via `GIGABPE_MIN_RANGE`
 - CLI guards for inputs the merge format cannot represent
 
 **Scale of verification.** The per-commit gate's largest corpus is 4.9 MB — CI
@@ -123,26 +123,26 @@ undecorated modes.
 
 ```bash
 pip install maturin
-maturin build --release --features python --manifest-path gigatrain/Cargo.toml
-pip install --find-links gigatrain/target/wheels gigatrain
+maturin build --release --features python --manifest-path gigabpe/Cargo.toml
+pip install --find-links gigabpe/target/wheels gigabpe
 ```
 
 ```python
-import gigatrain
+import gigabpe
 
-gigatrain.train_tokenizer(
+gigabpe.train_tokenizer(
     ["corpus.txt"], vocab_size=32000, output="tokenizer.json",
     pretokenizer="bytelevel", special_tokens=["<|endoftext|>"],
 )
-vocab, merges = gigatrain.train_bpe(["corpus.txt"], vocab_size=32000)
+vocab, merges = gigabpe.train_bpe(["corpus.txt"], vocab_size=32000)
 ```
 
 Keyword arguments mirror `BpeTrainer`: `special_tokens`, `min_frequency`,
 `max_token_length`, `limit_alphabet`, plus `pretokenizer` and `threads`.
 
 ```bash
-cargo build --release --manifest-path gigatrain/Cargo.toml
-GT=./gigatrain/target/release/gigatrain
+cargo build --release --manifest-path gigabpe/Cargo.toml
+GT=./gigabpe/target/release/gigabpe
 
 $GT --vocab-size 32000 corpus.txt                          # merges to stdout
 $GT --vocab-size 32000 --pretokenizer bytelevel corpus.txt # production config
@@ -153,7 +153,7 @@ $GT --vocab-size 32000 --words-tsv counts.tsv
 Options: `--min-frequency`, `--special` (repeatable, order-significant),
 `--max-token-length`, `--limit-alphabet`, `--threads`, `--pretokenizer`,
 `--continuing-subword-prefix`, `--end-of-word-suffix`, `--wordpiece`,
-`--vocab-out PATH`. `GIGATRAIN_STATS=1` prints stage RSS and phase-2 timings.
+`--vocab-out PATH`. `GIGABPE_STATS=1` prints stage RSS and phase-2 timings.
 
 ## How
 
@@ -188,7 +188,7 @@ everyone expects to be the hazard was 1 MB.
 - **HuggingFace is non-reproducible with `##`.** Decorated token ids come from
   hash-map order and feed the tie-break, making `WordPieceTrainer`
   non-reproducible by default. An open PR fixes it
-  ([#2066](https://github.com/huggingface/tokenizers/pull/2066)). gigatrain
+  ([#2066](https://github.com/huggingface/tokenizers/pull/2066)). gigabpe
   registers those tokens in sorted order and *is* reproducible; agreement with
   any single HF run is ~99.6% of merges.
 - **Peak RSS depends on the allocator**; macOS libmalloc is slow to return

@@ -326,7 +326,7 @@ pub fn train(word_table: WordTable, config: &TrainerConfig) -> TrainResult {
     }
 
     lap("initial pair count");
-    if std::env::var_os("GIGATRAIN_STATS").is_some() {
+    if std::env::var_os("GIGABPE_STATS").is_some() {
         let symbols = (0..words.len())
             .map(|i| words.symbols_of(i).len())
             .sum::<usize>();

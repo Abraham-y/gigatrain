@@ -54,10 +54,10 @@ image = (
     )
 )
 
-app = modal.App("gigatrain-benchmark", image=image)
+app = modal.App("gigabpe-benchmark", image=image)
 
 # FineWeb slices are reused across runs; downloading 25 GB every time is slow.
-volume = modal.Volume.from_name("gigatrain-data", create_if_missing=True)
+volume = modal.Volume.from_name("gigabpe-data", create_if_missing=True)
 DATA = "/data"
 
 
@@ -172,9 +172,9 @@ def benchmark(sizes, cpu, run_baselines=True, thread_scan=True):
     _sh("rustc --version")
     _sh("cat /proc/cpuinfo | grep 'model name' | head -1")
 
-    print("\n=== building gigatrain", flush=True)
-    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
-    gt = "/repo/gigatrain/target/release/gigatrain"
+    print("\n=== building gigabpe", flush=True)
+    _sh("cargo build --release --manifest-path /repo/gigabpe/Cargo.toml", check=True)
+    gt = "/repo/gigabpe/target/release/gigabpe"
 
     print("\n=== preparing corpora", flush=True)
     _prepare_corpora(sizes)
@@ -189,10 +189,10 @@ def benchmark(sizes, cpu, run_baselines=True, thread_scan=True):
         _sh(f"cat {corpus} > /dev/null")
 
         jobs = [
-            ("gigatrain-bytelevel",
+            ("gigabpe-bytelevel",
              f"{gt} --vocab-size 32000 --pretokenizer bytelevel "
              f'--special "<|endoftext|>" {corpus}'),
-            ("gigatrain-whitespace",
+            ("gigabpe-whitespace",
              f'{gt} --vocab-size 32000 --special "<|endoftext|>" {corpus}'),
         ]
         if run_baselines:
@@ -219,7 +219,7 @@ def benchmark(sizes, cpu, run_baselines=True, thread_scan=True):
     if thread_scan:
         scan_corpus = f"{DATA}/fineweb_1000mb.txt"
         if os.path.exists(scan_corpus):
-            print("\n=== gigatrain thread scaling (1 GB, ByteLevel)", flush=True)
+            print("\n=== gigabpe thread scaling (1 GB, ByteLevel)", flush=True)
             for t in [1, 2, 4, 8, 16, 32, 48, 64, 96]:
                 if t > cpu * 2:
                     break
@@ -240,7 +240,7 @@ def benchmark(sizes, cpu, run_baselines=True, thread_scan=True):
 @app.function(volumes={DATA: volume}, timeout=24 * 3600)
 def parity_at_scale(size_mb: int = 13000, pretokenizer: str = "whitespace",
                     vocab_size: int = 32000):
-    """Diff gigatrain's merge list against HF's at full corpus scale.
+    """Diff gigabpe's merge list against HF's at full corpus scale.
 
     The benchmark functions discard stdout, so nothing above 1 GB had ever
     been compared merge-for-merge — the headline number asserted a parity
@@ -249,8 +249,8 @@ def parity_at_scale(size_mb: int = 13000, pretokenizer: str = "whitespace",
     import os
 
     os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
-    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
-    gt = "/repo/gigatrain/target/release/gigatrain"
+    _sh("cargo build --release --manifest-path /repo/gigabpe/Cargo.toml", check=True)
+    gt = "/repo/gigabpe/target/release/gigabpe"
     corpus = f"{DATA}/fineweb_{size_mb}mb.txt"
     if not os.path.exists(corpus):
         _prepare_corpora([size_mb])
@@ -266,9 +266,9 @@ def parity_at_scale(size_mb: int = 13000, pretokenizer: str = "whitespace",
         if os.path.exists(f):
             os.remove(f)
 
-    print(f"=== gigatrain ({pretokenizer}, vocab {vocab_size})", flush=True)
+    print(f"=== gigabpe ({pretokenizer}, vocab {vocab_size})", flush=True)
     ours, ours_peak, ours_rc = _measure(
-        "gigatrain", size_mb,
+        "gigabpe", size_mb,
         f"{gt} --vocab-size {vocab_size} {special} {pt_gt} {corpus} > /tmp/ours.merges",
     )
     print(f"=== HuggingFace ({pretokenizer}) — this is the slow one", flush=True)
@@ -279,7 +279,7 @@ def parity_at_scale(size_mb: int = 13000, pretokenizer: str = "whitespace",
     )
     if ours_rc != 0 or theirs_rc != 0:
         raise RuntimeError(
-            f"trainer failed (gigatrain rc={ours_rc}, hf rc={theirs_rc}); "
+            f"trainer failed (gigabpe rc={ours_rc}, hf rc={theirs_rc}); "
             "refusing to report a parity verdict from a failed run"
         )
 
@@ -343,7 +343,7 @@ def main(sizes: str = "100,1000", cpu: int = 64, memory: int = 192,
     for mb, rows in sorted(by_size.items()):
         print(f"\n{mb} MB:")
         base = next((r["seconds"] for r in rows
-                     if r["tool"] == "gigatrain-bytelevel"), None)
+                     if r["tool"] == "gigabpe-bytelevel"), None)
         for r in sorted(rows, key=lambda x: x["seconds"]):
             rel = f"{r['seconds']/base:6.1f}x" if base and base > 0 else "     -"
             flag = "" if r["rc"] == 0 else "  (FAILED)"
@@ -374,8 +374,8 @@ def degenerate(size_mb: int, vocab_size: int, timeout: int, repeats: int,
     print("=== environment", flush=True)
     _sh("uname -a"); _sh("nproc")
 
-    print("\n=== building gigatrain", flush=True)
-    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+    print("\n=== building gigabpe", flush=True)
+    _sh("cargo build --release --manifest-path /repo/gigabpe/Cargo.toml", check=True)
 
     corpus_dir = f"{DATA}/real_{size_mb}mb"
     print("\n=== acquiring real corpora", flush=True)
@@ -444,8 +444,8 @@ def thread_sweep(size_mb: int, vocab_size: int, threads: str, repeats: int):
 
     os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
     _sh("uname -a"); _sh("nproc")
-    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
-    gt = "/repo/gigatrain/target/release/gigatrain"
+    _sh("cargo build --release --manifest-path /repo/gigabpe/Cargo.toml", check=True)
+    gt = "/repo/gigabpe/target/release/gigabpe"
 
     _prepare_corpora([size_mb])
     corpus = f"{DATA}/fineweb_{size_mb}mb.txt"
@@ -454,7 +454,7 @@ def thread_sweep(size_mb: int, vocab_size: int, threads: str, repeats: int):
     tlist = [int(t) for t in threads.split(",")]
     rows = []
     for t in tlist:
-        for tool in ("hf", "gigatrain"):
+        for tool in ("hf", "gigabpe"):
             if tool == "hf":
                 # tokenizers parallelises with rayon, which reads this.
                 # `env` is required: _measure prefixes `/usr/bin/time -v`, so a
@@ -496,14 +496,14 @@ def threads(size_mb: int = 100, vocab_size: int = 32000,
         size_mb, vocab_size, threads, repeats
     )
     print("\n============ CONTROLLED CORE-COUNT SWEEP (one box) ============")
-    print(f"{'threads':>8}  {'HF':>12}  {'gigatrain':>12}")
+    print(f"{'threads':>8}  {'HF':>12}  {'gigabpe':>12}")
     by = {}
     for r in rows:
         by.setdefault(r["threads"], {})[r["tool"]] = r
     base_hf = by[min(by)]["hf"]["median_s"] if by else None
     for t in sorted(by):
         hf = by[t].get("hf", {}).get("median_s")
-        gt = by[t].get("gigatrain", {}).get("median_s")
+        gt = by[t].get("gigabpe", {}).get("median_s")
         rel = f"  ({hf/base_hf:.2f}x vs 1 thread)" if hf and base_hf else ""
         print(f"{t:>8}  {hf if hf else '—':>12}  {gt if gt else '—':>12}{rel}")
 
@@ -512,7 +512,7 @@ def threads(size_mb: int = 100, vocab_size: int = 32000,
 def one_session(sizes, vocab_size: int, timeout: int, repeats: int):
     """Every trainer, every size, ONE container, one page cache, repeats.
 
-    Before this existed, the docs recorded gigatrain's own 1 GB ByteLevel time
+    Before this existed, the docs recorded gigabpe's own 1 GB ByteLevel time
     three different ways (8.5 s, 10.22 s, 14.9 s — since moved to
     docs/CORRECTIONS.md), because each competitor was benchmarked in its own
     session under different background load, making the published ratios
@@ -523,7 +523,7 @@ def one_session(sizes, vocab_size: int, timeout: int, repeats: int):
 
     os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
     _sh("uname -a"); _sh("nproc")
-    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+    _sh("cargo build --release --manifest-path /repo/gigabpe/Cargo.toml", check=True)
 
     size_list = [int(s) for s in sizes.split(",")]
     _prepare_corpora(size_list)
@@ -578,7 +578,7 @@ def inversion(size_mb: int, vocab_size: int, timeout: int, repeats: int):
 
     os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
     _sh("uname -a"); _sh("nproc")
-    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+    _sh("cargo build --release --manifest-path /repo/gigabpe/Cargo.toml", check=True)
 
     d = f"/tmp/inversion_{size_mb}"
     os.makedirs(d, exist_ok=True)
@@ -596,7 +596,7 @@ def inversion(size_mb: int, vocab_size: int, timeout: int, repeats: int):
     out = "/tmp/inversion.json"
     _sh(f"python3 /repo/scripts/degenerate_benchmark.py --corpus-dir {d} "
         f"--vocab-size {vocab_size} --timeout {timeout} --repeats {repeats} "
-        f"--trainers gigatrain,HF --json-out {out}")
+        f"--trainers gigabpe,HF --json-out {out}")
     import json as _json
     try:
         with open(out) as f:
@@ -623,14 +623,14 @@ def _one_variance_probe(idx: int):
     ident = f"{boot_id[:8]}/{os.environ.get('MODAL_TASK_ID', '?')[-8:]}"
     print(f"probe {idx}: boot_id={boot_id} task={os.environ.get('MODAL_TASK_ID')} "
           f"uptime={uptime}s", flush=True)
-    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+    _sh("cargo build --release --manifest-path /repo/gigabpe/Cargo.toml", check=True)
     _prepare_corpora([100])
     corpus = f"{DATA}/fineweb_100mb.txt"
     _sh(f"cat {corpus} > /dev/null")
-    gt = "/repo/gigatrain/target/release/gigatrain"
+    gt = "/repo/gigabpe/target/release/gigabpe"
     rows = []
     for tool, cmd in (
-        ("gigatrain", f"{gt} --vocab-size 32000 --pretokenizer bytelevel {corpus}"),
+        ("gigabpe", f"{gt} --vocab-size 32000 --pretokenizer bytelevel {corpus}"),
         ("hf", f"python3 /repo/scripts/hf_train_cli.py --vocab-size 32000 "
                f"--pretokenizer bytelevel {corpus}"),
     ):
@@ -663,7 +663,7 @@ def variance(n: int = 8, cpu: int = 16, memory: int = 64):
         cpu=cpu, memory=memory * 1024).map(range(n)))
     flat = [r for rows in out for r in rows]
     print("\n============ BETWEEN-CONTAINER VARIANCE ============")
-    for tool in ("gigatrain", "hf"):
+    for tool in ("gigabpe", "hf"):
         xs = [r["seconds"] for r in flat if r["tool"] == tool and r["rc"] == 0]
         hosts = {r["host"] for r in flat if r["tool"] == tool}
         if not xs:
@@ -690,7 +690,7 @@ def boundary(size_mb: int, vocab_size: int, timeout: int, repeats: int):
 
     os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
     _sh("uname -a"); _sh("nproc"); _sh("uptime")
-    _sh("cargo build --release --manifest-path /repo/gigatrain/Cargo.toml", check=True)
+    _sh("cargo build --release --manifest-path /repo/gigabpe/Cargo.toml", check=True)
 
     d = f"/tmp/boundary_{size_mb}"
     os.makedirs(d, exist_ok=True)
@@ -717,7 +717,7 @@ def boundary(size_mb: int, vocab_size: int, timeout: int, repeats: int):
     out = "/tmp/boundary.json"
     _sh(f"python3 /repo/scripts/degenerate_benchmark.py --corpus-dir {d} "
         f"--vocab-size {vocab_size} --timeout {timeout} --repeats {repeats} "
-        f"--trainers gigatrain --only nocut --only withnl --json-out {out}")
+        f"--trainers gigabpe --only nocut --only withnl --json-out {out}")
     import json as _json
     try:
         with open(out) as f:

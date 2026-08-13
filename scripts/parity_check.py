@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train HF tokenizers' BpeTrainer and gigatrain on identical input and
+"""Train HF tokenizers' BpeTrainer and gigabpe on identical input and
 compare serialized merge lists merge-for-merge.
 
 Usage:
@@ -19,7 +19,7 @@ from pathlib import Path
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers
 
 ROOT = Path(__file__).resolve().parent.parent
-GIGATRAIN = ROOT / "gigatrain" / "target" / "release" / "gigatrain"
+GIGABPE = ROOT / "gigabpe" / "target" / "release" / "gigabpe"
 
 
 def hf_train(files, args):
@@ -54,9 +54,9 @@ def hf_train(files, args):
     return merges, vocab, elapsed
 
 
-def gigatrain_train(files, args):
+def gigabpe_train(files, args):
     cmd = [
-        str(GIGATRAIN),
+        str(GIGABPE),
         "--vocab-size", str(args.vocab_size),
         "--min-frequency", str(args.min_frequency),
     ]
@@ -82,7 +82,7 @@ def gigatrain_train(files, args):
         t0 = time.perf_counter()
         proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
         elapsed = time.perf_counter() - t0
-        print(f"  gigatrain stats: {proc.stderr.strip()}", file=sys.stderr)
+        print(f"  gigabpe stats: {proc.stderr.strip()}", file=sys.stderr)
         merges = []
         for line in proc.stdout.splitlines():
             a, sep, b = line.partition(" ")
@@ -116,8 +116,8 @@ def main():
     hf_merges, hf_vocab, hf_time = hf_train(args.files, args)
     print(f"  {len(hf_merges)} merges in {hf_time:.2f}s", file=sys.stderr)
 
-    print("gigatrain training...", file=sys.stderr)
-    our_merges, our_vocab, our_time = gigatrain_train(args.files, args)
+    print("gigabpe training...", file=sys.stderr)
+    our_merges, our_vocab, our_time = gigabpe_train(args.files, args)
     print(f"  {len(our_merges)} merges in {our_time:.2f}s (incl. subprocess)", file=sys.stderr)
 
     n = min(len(hf_merges), len(our_merges))

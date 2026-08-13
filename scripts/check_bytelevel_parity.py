@@ -24,7 +24,7 @@ from pathlib import Path
 from tokenizers import pre_tokenizers
 
 ROOT = Path(__file__).resolve().parent.parent
-PRETOK = ROOT / "gigatrain" / "target" / "release" / "pretok"
+PRETOK = ROOT / "gigabpe" / "target" / "release" / "pretok"
 
 HF = pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=True)
 

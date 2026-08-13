@@ -1,5 +1,5 @@
 [package]
-name = "gigatrain"
+name = "gigabpe"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.82"
@@ -10,7 +10,7 @@ keywords = ["bpe", "tokenizer", "nlp", "training", "tokenization"]
 categories = ["text-processing", "science"]
 
 [lib]
-name = "gigatrain"
+name = "gigabpe"
 # cdylib for the Python extension module; rlib so the CLI and tests still link.
 crate-type = ["cdylib", "rlib"]
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Self-contained benchmark: gigatrain vs HuggingFace tokenizers, rustbpe and
+# Self-contained benchmark: gigabpe vs HuggingFace tokenizers, rustbpe and
 # SentencePiece, on FineWeb slices. Downloads its own data.
 #
 # Everything quoted in BENCHMARKS.md came from isolated cloud containers via
@@ -19,7 +19,7 @@
 # thrash or fail below that, which is itself a result worth recording).
 set -uo pipefail
 
-WORK="${1:-/tmp/gigatrain-bench}"
+WORK="${1:-/tmp/gigabpe-bench}"
 shift || true
 SIZES=("${@:-100 1000}")
 [ $# -gt 0 ] && SIZES=("$@")
@@ -50,9 +50,9 @@ log "installing python baselines"
 python3 -m pip install --quiet --upgrade tokenizers sentencepiece rustbpe maturin || {
     echo "pip install failed; baselines may be missing"; }
 
-log "building gigatrain"
-cargo build --release --manifest-path "$REPO/gigatrain/Cargo.toml"
-GT="$REPO/gigatrain/target/release/gigatrain"
+log "building gigabpe"
+cargo build --release --manifest-path "$REPO/gigabpe/Cargo.toml"
+GT="$REPO/gigabpe/target/release/gigabpe"
 
 # ---------------------------------------------------------------------- data
 log "preparing corpora"
@@ -111,9 +111,9 @@ for mb in "${SIZES[@]}"; do
     # Warm the page cache so the first tool measured is not penalised.
     cat "$corpus" > /dev/null
 
-    measure gigatrain-bytelevel "$mb" "$GT" --vocab-size 32000 \
+    measure gigabpe-bytelevel "$mb" "$GT" --vocab-size 32000 \
         --pretokenizer bytelevel --special "<|endoftext|>" "$corpus"
-    measure gigatrain-whitespace "$mb" "$GT" --vocab-size 32000 \
+    measure gigabpe-whitespace "$mb" "$GT" --vocab-size 32000 \
         --special "<|endoftext|>" "$corpus"
     measure hf "$mb" python3 "$REPO/scripts/hf_train_cli.py" \
         --vocab-size 32000 --special "<|endoftext|>" "$corpus"
@@ -124,7 +124,7 @@ for mb in "${SIZES[@]}"; do
 done
 
 # --------------------------------------------------------------- thread scan
-log "gigatrain thread scaling (1 GB, ByteLevel)"
+log "gigabpe thread scaling (1 GB, ByteLevel)"
 scan_corpus="$WORK/data/fineweb_1000mb.txt"
 if [ -f "$scan_corpus" ]; then
     for t in 1 2 4 8 16 32 64; do
@@ -138,6 +138,6 @@ log "results"
 column -t "$RESULTS" 2>/dev/null || cat "$RESULTS"
 echo
 echo "raw results: $RESULTS"
-echo "NOTE: gigatrain output is byte-identical to HuggingFace (see"
+echo "NOTE: gigabpe output is byte-identical to HuggingFace (see"
 echo "scripts/run_parity_ci.sh). rustbpe and SentencePiece produce different"
 echo "tokenizers by design, so those rows compare speed and memory only."

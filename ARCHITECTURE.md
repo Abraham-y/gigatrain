@@ -1,4 +1,4 @@
-# gigatrain architecture
+# gigabpe architecture
 
 Zero-dependency Rust. Two phases with opposite characters: phase 1 is
 embarrassingly parallel and I/O bound, phase 2 is strictly sequential and
@@ -86,7 +86,7 @@ memory layout, not parallelism.
 
 ## Diagnostics
 
-`GIGATRAIN_STATS=1` prints stage-boundary RSS, structure sizes (words,
+`GIGABPE_STATS=1` prints stage-boundary RSS, structure sizes (words,
 symbols, distinct pairs, position entries and capacity), and phase-2
 sub-stage timings. This is what showed that phase 1, not the merge loop, held
 most of the memory — worth running before optimizing anything here, since the

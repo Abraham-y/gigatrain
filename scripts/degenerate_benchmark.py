@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-GIGATRAIN = ROOT / "gigatrain" / "target" / "release" / "gigatrain"
+GIGABPE = ROOT / "gigabpe" / "target" / "release" / "gigabpe"
 SCRIPTS = ROOT / "scripts"
 
 # `/usr/bin/time -l` is BSD/macOS and reports peak RSS in BYTES; GNU time on
@@ -144,10 +144,10 @@ def compare(a_path, b_path):
 
 def build_jobs(corpus, mode, args, py):
     """(name, cmd, produces_merges) for every trainer that can run this mode."""
-    gt = [str(GIGATRAIN), "--vocab-size", str(args.vocab_size)]
+    gt = [str(GIGABPE), "--vocab-size", str(args.vocab_size)]
     if mode == "bytelevel":
         gt += ["--pretokenizer", "bytelevel"]
-    jobs = [("gigatrain", gt + [str(corpus)], True),
+    jobs = [("gigabpe", gt + [str(corpus)], True),
             ("HF", [py, str(SCRIPTS / "hf_train_cli.py"),
                      "--vocab-size", str(args.vocab_size),
                      "--pretokenizer", mode, str(corpus)], True)]
@@ -180,7 +180,7 @@ def main():
     p.add_argument("--threads", type=int, default=None)
     p.add_argument("--only", action="append", default=[])
     p.add_argument("--trainers", default=None,
-                   help="comma-separated subset, e.g. gigatrain,HF")
+                   help="comma-separated subset, e.g. gigabpe,HF")
     p.add_argument("--python", default=sys.executable)
     p.add_argument("--json-out", default=None)
     p.add_argument("--work", default="/tmp/degen_out")
@@ -208,7 +208,7 @@ def main():
             for name, cmd, makes_merges in build_jobs(corpus, mode, args, args.python):
                 if want and name not in want:
                     continue
-                if args.threads and name == "gigatrain":
+                if args.threads and name == "gigabpe":
                     cmd = cmd + ["--threads", str(args.threads)]
                 walls, rsss, statuses, last_out = [], [], [], None
                 for r in range(args.repeats):
@@ -239,7 +239,7 @@ def main():
 
                 parity = "—"
                 if makes_merges and ok:
-                    if name == "gigatrain":
+                    if name == "gigabpe":
                         ref_path = last_out
                     elif ref_path:
                         parity = compare(ref_path, last_out)

@@ -189,7 +189,7 @@ fn train_tokenizer(
 }
 
 #[pymodule]
-fn gigatrain(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn gigabpe(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(train_bpe, m)?)?;
     m.add_function(wrap_pyfunction!(train_tokenizer, m)?)?;

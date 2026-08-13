@@ -8,8 +8,8 @@ name: Release
 #
 # PyPI auth uses Trusted Publishing (OIDC), so no API token has to be stored
 # in the repository. Configure it once at
-# https://pypi.org/manage/project/gigatrain/settings/publishing/ with:
-#   owner=Abraham-y  repo=gigatrain  workflow=release.yml  environment=pypi
+# https://pypi.org/manage/project/gigabpe/settings/publishing/ with:
+#   owner=Abraham-y  repo=gigabpe  workflow=release.yml  environment=pypi
 
 on:
   push:
@@ -57,13 +57,13 @@ jobs:
           # build that needs a Rust toolchain.
           args: >-
             --release --features python
-            --manifest-path gigatrain/Cargo.toml
+            --manifest-path gigabpe/Cargo.toml
             --interpreter 3.9 3.10 3.11 3.12 3.13 3.14
           manylinux: auto
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.platform.runner }}-${{ matrix.platform.target }}
-          path: gigatrain/target/wheels/*.whl
+          path: gigabpe/target/wheels/*.whl
 
   sdist:
     runs-on: ubuntu-latest
@@ -72,11 +72,11 @@ jobs:
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          args: --manifest-path gigatrain/Cargo.toml
+          args: --manifest-path gigabpe/Cargo.toml
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
-          path: gigatrain/target/wheels/*.tar.gz
+          path: gigabpe/target/wheels/*.tar.gz
 
   # Smoke-test a built wheel before anything is published: install it on a
   # clean runner and check it still produces a tokenizer.json that HF loads.
@@ -92,7 +92,7 @@ jobs:
         with:
           name: wheels-ubuntu-latest-x86_64
           path: dist
-      - run: pip install tokenizers==0.22.2 && pip install --no-index --find-links dist gigatrain
+      - run: pip install tokenizers==0.22.2 && pip install --no-index --find-links dist gigabpe
       # -f: an HTTP error must fail the step, not feed an error page to the check
       - run: curl -fsSL -o /tmp/wp.txt https://www.gutenberg.org/files/2600/2600-0.txt
       - run: python scripts/check_bindings.py /tmp/wp.txt

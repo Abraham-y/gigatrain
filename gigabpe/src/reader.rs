@@ -34,12 +34,12 @@ fn is_ws(b: u8) -> bool {
 /// Smallest byte range worth giving its own reader thread.
 ///
 /// 64 MiB in production: below that, a second reader costs more in seeking than
-/// it gains in throughput. `GIGATRAIN_MIN_RANGE` overrides it so the parity gate
+/// it gains in throughput. `GIGABPE_MIN_RANGE` overrides it so the parity gate
 /// can exercise multi-reader splitting — including `read_range`'s skip and
 /// overshoot rules at range boundaries — without a 128 MB corpus. Those branches
 /// are otherwise unreachable in CI, which runs on files of a few MB.
 pub fn min_range_bytes() -> u64 {
-    std::env::var("GIGATRAIN_MIN_RANGE")
+    std::env::var("GIGABPE_MIN_RANGE")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|&v| v > 0)
@@ -248,7 +248,7 @@ mod tests {
         rule: CutRule,
     ) -> HashMap<String, u64> {
         let dir = std::env::temp_dir().join(format!(
-            "gigatrain_reader_test_{}_{}_{}_{:?}",
+            "gigabpe_reader_test_{}_{}_{}_{:?}",
             data.len(),
             nranges,
             chunk,

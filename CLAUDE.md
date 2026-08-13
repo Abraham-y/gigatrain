@@ -73,7 +73,7 @@ These are not style preferences; each one exists because it was violated.
 
 1. **Grep every number against its source before publishing.** If it appears
    only in the write-up, it is not a measurement.
-2. **One variable per experiment.** If a thread scan is run for gigatrain, run
+2. **One variable per experiment.** If a thread scan is run for gigabpe, run
    it for the baseline. State the configuration of *every* system compared.
 3. **Verify the machine is quiet and say so.** Every laptop number in this
    repo's history was taken while an unrelated training job was running.

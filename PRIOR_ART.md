@@ -22,7 +22,7 @@ the one-session table, narrowly ahead of YouTokenToMe.
 
 Where this project still differs:
 
-| | gigatoken | gigatrain |
+| | gigatoken | gigabpe |
 |---|---|---|
 | parity test scale | ~120 KB synthetic, vocab 500 | 12.9 GB FineWeb, vocab 32k |
 | parity scope | tie-break; hardcodes the 0–255 alphabet | alphabet construction, ID reuse, `min_frequency`, `max_token_length`, `limit_alphabet`, stale re-push, duplicate-merge |
@@ -98,7 +98,7 @@ of training and the sequential priority queue capping speedup near 1.3x
 ## 3. What published trainer benchmarks report
 
 Audited 2026-08-05 against a checklist drawn from this project's own failures
-(docs/CORRECTIONS.md). gigatrain's pre-August benchmark is included as a row,
+(docs/CORRECTIONS.md). gigabpe's pre-August benchmark is included as a row,
 because excluding it would be the kind of thing this audit exists to catch.
 
 | Benchmark | mem | parity | variance | bytes | hw | threads | real data | repro |
@@ -109,13 +109,13 @@ because excluding it would be the kind of thing this audit exists to catch.
 | gigatoken | — | — | — | — | — | — | — | — |
 | rustbpe | — | — | — | — | — | — | — | — |
 | SentencePiece (sp#366) | ✗ | n/a | ✗ | ✓ | ✗ | ~ | ? | ✗ |
-| **gigatrain, pre-Aug 2026** | ✓ | ✓ | **✗** | ✓ | ✓ | **✗** | **~** | ✓ |
+| **gigabpe, pre-Aug 2026** | ✓ | ✓ | **✗** | ✓ | ✓ | **✗** | **~** | ✓ |
 
 — = publishes no trainer benchmark at all. gigatoken's README benchmarks are
 encoding throughput; rustbpe claims only "fast training with parallel
 processing" with no numbers.
 
-**Tallies, over the five scored benchmarks** (four external plus gigatrain's
+**Tallies, over the five scored benchmarks** (four external plus gigabpe's
 own pre-August one): **peak memory 2/5, output correctness 3/5, timing
 variance 0/5** — in a field whose canonical failure (#1681, #1795, #1824,
 sentencepiece#1021) is OOM. Three of the four external benchmarks do not
@@ -126,7 +126,7 @@ publish no trainer benchmark at all.
 little.** YouTokenToMe states its hardware (36-core Xeon) and its own thread
 count ("YouTokenToMe used 4 threads"), notes SentencePiece and fastBPE are
 single-threaded — and never states HuggingFace's, while scanning threads for
-itself only. That is a real reporting gap, and gigatrain had the identical
+itself only. That is a real reporting gap, and gigabpe had the identical
 defect until August 2026.
 
 **However, their numbers reproduce.** Their benchmark reports 25.4 s for
@@ -164,7 +164,7 @@ surfaces in the manifest were read.
 
 ## 4. Honest positioning
 
-> gigatrain trains a 32k BPE vocabulary on 12.9 GB of FineWeb in 38 s against
+> gigabpe trains a 32k BPE vocabulary on 12.9 GB of FineWeb in 38 s against
 > HuggingFace's 257 s, same ByteLevel pretokenizer, with all 31,790 merges
 > byte-identical; and 19.4 GB in 2.9 GB of RAM where HuggingFace needs 36.3 GB.
 > The algorithm is standard; the contribution is phase-1 architecture, memory
@@ -185,9 +185,9 @@ documented nowhere else including HuggingFace's own docs.
 ## 5. Open
 
 - ~~Run ffbpe and YouTokenToMe in the one-session table~~ **done 2026-08-07.**
-  All seven trainers are now in one comparable table; gigatrain is fastest at
+  All seven trainers are now in one comparable table; gigabpe is fastest at
   both sizes. YouTokenToMe is second-fastest at 1 GB but uses **6.4 GB of RAM
-  for a 1 GB corpus**, 12x gigatrain's and the highest of any trainer measured
+  for a 1 GB corpus**, 12x gigabpe's and the highest of any trainer measured
   — a cost invisible in the literature, since no published trainer benchmark
   reports memory.
 - gigatoken at 12.9 GB is unmeasured.

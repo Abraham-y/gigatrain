@@ -110,19 +110,19 @@ limit, none at all. This crate uses `i64` and does not.
 
 **This is a real, reachable divergence, not a theoretical one.** Measured: a
 corpus with 2,147,850,000 occurrences of one pair makes HF emit zero merges
-and a one-token vocabulary, while gigatrain emits three; both are
+and a one-token vocabulary, while gigabpe emits three; both are
 deterministic, 3/3 runs. HF completed that run in 10-19 seconds, so an
 earlier version of this document was wrong to excuse it as happening only
 "where HF cannot finish training anyway".
 
 Extrapolating the most frequent FineWeb bigram, the threshold lands around
 120-150 GB of English web text — below the scale this project targets. Above
-it, gigatrain's output is arguably the correct one, but it is **not** HF's.
+it, gigabpe's output is arguably the correct one, but it is **not** HF's.
 
 ### The negative direction, reachable at 38 bytes
 
 The overflow above needs 2^31 occurrences. The **opposite** sign error needs
-eight words, and gigatrain must reproduce it.
+eight words, and gigabpe must reproduce it.
 
 Under `continuing_subword_prefix` (or `end_of_word_suffix`) combined with
 `max_token_length`, a pair count can go **negative**. Merge-time id reuse is
@@ -134,7 +134,7 @@ already at zero is decremented to `-1`.
 HF then evaluates `pair_counts[&pair] as u64`. That turns `-1` into
 `18446744073709551615`, which passes the staleness re-check, is not `< 1`, and
 **wins the heap immediately** — so HF emits an extra merge for a pair that
-occurs nowhere in the corpus. gigatrain's `live as u64` on an `i64` sign-extends
+occurs nowhere in the corpus. gigabpe's `live as u64` on an `i64` sign-extends
 to the same value and reproduces this exactly. (`i32` vs `i64` is irrelevant
 here: both sign-extend identically for any value in `i32` range.)
 
@@ -146,10 +146,10 @@ corpus: '##c ##cac# #ab c# #### accc#a#a#b a cb'
   --special a --special '<unk>'
 ```
 
-gigatrain emits 15 merges, with `('##c', '##a')` at index 11 — the phantom
+gigabpe emits 15 merges, with `('##c', '##a')` at index 11 — the phantom
 merge. Verified against HF over 200 runs: HF produced 8 distinct outputs
 (13, 14 or 15 merges, per the decorated-mode nondeterminism below), and the
-**13 runs that landed on gigatrain's token ordering matched it exactly**,
+**13 runs that landed on gigabpe's token ordering matched it exactly**,
 phantom merge included.
 
 Only `max_token_length` 4 triggers it on this corpus; 2, 3, 5, 6, 8, 100 and
@@ -179,7 +179,7 @@ reading of the API would predict, which is precisely why it is specified here.
   huggingface/tokenizers#2066 / #1794, and it means **`WordPieceTrainer` is
   non-reproducible by default**, since it sets `##`.
 
-  gigatrain registers decorated tokens in **sorted** order, before
+  gigabpe registers decorated tokens in **sorted** order, before
   tokenization, so its own output is deterministic across runs and thread
   counts. Measured agreement with HF under `##` at vocab 2000: 1806 of our
   1813 merges appear in a given HF run, 1803 appear in all three, and HF

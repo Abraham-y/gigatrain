@@ -25,8 +25,8 @@ fi
 echo "using python: $($PYTHON -c 'import sys, tokenizers; print(sys.executable, "tokenizers", tokenizers.__version__)')"
 
 echo "== cargo tests (includes ports of HF's own trainer tests) =="
-(cd gigatrain && cargo test --release --quiet)
-(cd gigatrain && cargo build --release --quiet)
+(cd gigabpe && cargo test --release --quiet)
+(cd gigabpe && cargo build --release --quiet)
 
 echo "== generating synthetic corpus =="
 if [ ! -f "$WORK/synth.txt" ]; then
@@ -91,7 +91,7 @@ echo "== ByteLevel pretokenizer differential vs HF (BMP sweep + corpora) =="
 "$PYTHON" scripts/check_bytelevel_parity.py "$WORK/war_and_peace.txt" "$WORK/hongloumeng.txt"
 
 echo "== determinism: output must not depend on thread count =="
-GT=gigatrain/target/release/gigatrain
+GT=gigabpe/target/release/gigabpe
 $GT --vocab-size 3000 "$WORK/war_and_peace.txt" 2>/dev/null > "$WORK/threads_ref.merges"
 for t in 1 2 3 7 16; do
   $GT --vocab-size 3000 --threads $t "$WORK/war_and_peace.txt" 2>/dev/null \
@@ -123,17 +123,17 @@ done
 echo "== determinism: parallel range readers (forced on a small corpus) =="
 # A second reader is only allocated per 64 MiB of input, so on CI-sized files
 # `readers` is always 1 and read_range's skip/overshoot rules at range
-# boundaries never execute. GIGATRAIN_MIN_RANGE lowers that threshold so the
+# boundaries never execute. GIGABPE_MIN_RANGE lowers that threshold so the
 # splitting path is actually covered without a 128 MB download.
 for mode in "" "--pretokenizer bytelevel"; do
   label="${mode:-whitespace}"
   ref=$($GT --vocab-size 3000 $mode "$WORK/war_and_peace.txt" 2>/dev/null | shasum | cut -d' ' -f1)
   for mr in 65536 262144 1048576; do
     for t in 1 3 8; do
-      got=$(GIGATRAIN_MIN_RANGE=$mr $GT --vocab-size 3000 $mode --threads $t \
+      got=$(GIGABPE_MIN_RANGE=$mr $GT --vocab-size 3000 $mode --threads $t \
             "$WORK/war_and_peace.txt" 2>/dev/null | shasum | cut -d' ' -f1)
       [ "$ref" = "$got" ] || {
-        echo "FAIL: $label differs at GIGATRAIN_MIN_RANGE=$mr --threads $t"
+        echo "FAIL: $label differs at GIGABPE_MIN_RANGE=$mr --threads $t"
         exit 1
       }
     done

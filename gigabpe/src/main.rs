@@ -2,8 +2,8 @@
 //! tokenizer.json order) to stdout, one merge per line as "left right".
 //!
 //! Usage:
-//!   gigatrain --vocab-size N [options] FILE...
-//!   gigatrain --vocab-size N [options] --words-tsv COUNTS.tsv
+//!   gigabpe --vocab-size N [options] FILE...
+//!   gigabpe --vocab-size N [options] --words-tsv COUNTS.tsv
 //!
 //! Options:
 //!   --min-frequency N       (default 0)
@@ -32,7 +32,7 @@
 //! word and a 2 GB case did not finish in an hour. See BENCHMARKS.md,
 //! "Boundary-free input".
 
-use gigatrain::{train, TrainerConfig, WordCounter, WordTable};
+use gigabpe::{train, TrainerConfig, WordCounter, WordTable};
 use std::io::Write;
 use std::time::Instant;
 
@@ -140,11 +140,11 @@ fn main() {
     // 0 means "use every core", matching the Python binding, which treats it
     // as the auto sentinel.
     if let Some(t) = threads {
-        if t > gigatrain::pipeline::MAX_WORKERS {
+        if t > gigabpe::pipeline::MAX_WORKERS {
             die(&format!(
                 "--threads {t} exceeds the maximum supported ({}); \
                  omit the flag to use every core",
-                gigatrain::pipeline::MAX_WORKERS
+                gigabpe::pipeline::MAX_WORKERS
             ));
         }
     }
@@ -202,11 +202,11 @@ fn main() {
         if inputs.is_empty() {
             die("no input files (or --words-tsv) given");
         }
-        gigatrain::pipeline::count_words(&inputs, nthreads, bytelevel).unwrap_or_else(|e| die(&e))
+        gigabpe::pipeline::count_words(&inputs, nthreads, bytelevel).unwrap_or_else(|e| die(&e))
     };
     let t_phase1 = t0.elapsed();
     let word_count = word_table.len();
-    gigatrain::rss::report("phase 1 total");
+    gigabpe::rss::report("phase 1 total");
 
     let t1 = Instant::now();
     let result = train(word_table, &config);
@@ -228,7 +228,7 @@ fn main() {
             if i > 0 {
                 buf.push(',');
             }
-            buf.push_str(&gigatrain::tokenizer_json::json_string(token));
+            buf.push_str(&gigabpe::tokenizer_json::json_string(token));
         }
         buf.push(']');
         std::fs::write(path, buf).unwrap_or_else(|e| die(&format!("writing {path}: {e}")));

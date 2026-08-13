@@ -17,7 +17,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-import gigatrain
+import gigabpe
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers
 
 
@@ -41,7 +41,7 @@ def main():
         sys.exit(2)
 
     failures = 0
-    print(f"gigatrain {gigatrain.__version__}")
+    print(f"gigabpe {gigabpe.__version__}")
 
     for pretok in ("whitespace", "bytelevel"):
         vocab_size = 3000
@@ -53,7 +53,7 @@ def main():
         hf_merges = [tuple(m) for m in hf_model["merges"]]
 
         # 1. train_bpe returns matching merges and vocab
-        vocab, merges = gigatrain.train_bpe(
+        vocab, merges = gigabpe.train_bpe(
             [corpus], vocab_size, special_tokens=specials, pretokenizer=pretok
         )
         if merges != hf_merges:
@@ -75,7 +75,7 @@ def main():
         # 2. train_tokenizer writes a loadable, matching tokenizer.json
         with tempfile.TemporaryDirectory() as d:
             out = str(Path(d) / "tokenizer.json")
-            gigatrain.train_tokenizer(
+            gigabpe.train_tokenizer(
                 [corpus], vocab_size, out,
                 special_tokens=specials, pretokenizer=pretok,
             )

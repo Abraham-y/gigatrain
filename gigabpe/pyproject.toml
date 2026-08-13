@@ -3,7 +3,7 @@ requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "gigatrain"
+name = "gigabpe"
 description = "Fast BPE tokenizer trainer with byte-exact HuggingFace tokenizers parity"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -18,7 +18,7 @@ classifiers = [
 dynamic = ["version"]
 
 [project.urls]
-Repository = "https://github.com/Abraham-y/gigatrain"
+Repository = "https://github.com/Abraham-y/gigabpe"
 
 [tool.maturin]
 features = ["python"]

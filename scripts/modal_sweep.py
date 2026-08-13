@@ -47,8 +47,8 @@ image = (
     )
 )
 
-app = modal.App("gigatrain-sweep", image=image)
-volume = modal.Volume.from_name("gigatrain-data", create_if_missing=True)
+app = modal.App("gigabpe-sweep", image=image)
+volume = modal.Volume.from_name("gigabpe-data", create_if_missing=True)
 DATA = "/data"
 
 
@@ -288,11 +288,11 @@ def analyse(vocabs, size_mb=1000, heldout_mb=20):
 
     os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
     _sh("cd /repo && maturin build --release --features python "
-        "--manifest-path gigatrain/Cargo.toml", check=True)
+        "--manifest-path gigabpe/Cargo.toml", check=True)
     _sh("pip install --force-reinstall --find-links "
-        "/repo/gigatrain/target/wheels gigatrain", check=True)
+        "/repo/gigabpe/target/wheels gigabpe", check=True)
 
-    import gigatrain
+    import gigabpe
     from tokenizers import Tokenizer
 
     comps = ["english", "code", "multilingual"]
@@ -308,7 +308,7 @@ def analyse(vocabs, size_mb=1000, heldout_mb=20):
             out = f"{DATA}/models/{c}_{size_mb}_{v}.json"
             os.makedirs(f"{DATA}/models", exist_ok=True)
             if not os.path.exists(out):
-                gigatrain.train_tokenizer(
+                gigabpe.train_tokenizer(
                     [corpora[c]], v, out, pretokenizer="bytelevel",
                     special_tokens=["<|endoftext|>"],
                 )
@@ -496,11 +496,11 @@ def sweep(sizes, vocabs, heldout_mb=20, composition="english", seed=0):
 
     os.environ["PATH"] = f"/root/.cargo/bin:{os.environ['PATH']}"
     _sh("cd /repo && maturin build --release --features python "
-        "--manifest-path gigatrain/Cargo.toml", check=True)
-    _sh("pip install --force-reinstall --find-links /repo/gigatrain/target/wheels gigatrain",
+        "--manifest-path gigabpe/Cargo.toml", check=True)
+    _sh("pip install --force-reinstall --find-links /repo/gigabpe/target/wheels gigabpe",
         check=True)
 
-    import gigatrain
+    import gigabpe
     from tokenizers import Tokenizer
 
     # --- corpora -------------------------------------------------------
@@ -519,7 +519,7 @@ def sweep(sizes, vocabs, heldout_mb=20, composition="english", seed=0):
         for s in sizes:
             out = f"/tmp/tok_{s}_{v}_s{seed}.json"
             t0 = time.perf_counter()
-            gigatrain.train_tokenizer(
+            gigabpe.train_tokenizer(
                 [corpora[s]], v, out,
                 pretokenizer="bytelevel", special_tokens=["<|endoftext|>"],
             )

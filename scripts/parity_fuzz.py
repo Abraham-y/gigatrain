@@ -21,7 +21,7 @@ from pathlib import Path
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers
 
 ROOT = Path(__file__).resolve().parent.parent
-GIGATRAIN = ROOT / "gigatrain" / "target" / "release" / "gigatrain"
+GIGABPE = ROOT / "gigabpe" / "target" / "release" / "gigabpe"
 
 
 def random_table(rng):
@@ -62,7 +62,7 @@ def ours_train(table, vocab_size, max_token_length):
         for word, count in table.items():
             f.write(f"{word}\t{count}\n")
         path = f.name
-    cmd = [str(GIGATRAIN), "--vocab-size", str(vocab_size), "--words-tsv", path]
+    cmd = [str(GIGABPE), "--vocab-size", str(vocab_size), "--words-tsv", path]
     if max_token_length is not None:
         cmd += ["--max-token-length", str(max_token_length)]
     try:

@@ -12,7 +12,7 @@ use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 
 /// Per-stage nanosecond counters, summed across threads. Only meaningful with
-/// GIGATRAIN_STATS=1; the clock reads cost a few ns each and are skipped
+/// GIGABPE_STATS=1; the clock reads cost a few ns each and are skipped
 /// otherwise.
 #[derive(Default)]
 struct StageTimers {
@@ -348,7 +348,7 @@ pub fn count_words(
             // Ranges come from the stat size and the readers seek, so a
             // non-regular file cannot be read this way. A FIFO reports size 0,
             // which previously produced an empty vocabulary and exit 0 — so
-            // `gigatrain <(zcat corpus.gz)` silently emitted nothing.
+            // `gigabpe <(zcat corpus.gz)` silently emitted nothing.
             if !meta.is_file() {
                 errors.set(format!(
                     "{path} is not a regular file; pipes and process \

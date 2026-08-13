@@ -1,12 +1,12 @@
-//! Stage-boundary RSS probe, enabled with GIGATRAIN_STATS=1.
+//! Stage-boundary RSS probe, enabled with GIGABPE_STATS=1.
 //!
 //! Shells out to `ps` rather than taking a libc dependency; it only runs a
 //! handful of times per training run, gated behind the env var.
 
 pub fn enabled() -> bool {
-    // The documented spelling is GIGATRAIN_STATS=1; treat "0" and the empty
+    // The documented spelling is GIGABPE_STATS=1; treat "0" and the empty
     // string as off rather than keying on mere presence.
-    std::env::var_os("GIGATRAIN_STATS").is_some_and(|v| !v.is_empty() && v != "0")
+    std::env::var_os("GIGABPE_STATS").is_some_and(|v| !v.is_empty() && v != "0")
 }
 
 /// Current resident set size in bytes, or None if unavailable.

@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "docs", "audit-sources")
 MANIFEST = os.path.join(OUT, "MANIFEST.json")
-UA = {"User-Agent": "gigatrain-literature-audit/0.1 (research; contact via repo)"}
+UA = {"User-Agent": "gigabpe-literature-audit/0.1 (research; contact via repo)"}
 
 # (slug, kind, locator). kind: "url" | "gh"
 SOURCES = [

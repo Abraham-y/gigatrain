@@ -23,7 +23,7 @@ fn main() {
     let mut out = std::io::BufWriter::new(stdout.lock());
 
     if lines {
-        let table = gigatrain::bytelevel::byte_to_char();
+        let table = gigabpe::bytelevel::byte_to_char();
         let mut buf = String::new();
         for line in text.split('\n') {
             let mut first = true;
@@ -35,9 +35,9 @@ fn main() {
                 write!(out, "{t}").unwrap();
             };
             if bytelevel {
-                gigatrain::bytelevel::for_each_token(line, &table, &mut buf, emit);
+                gigabpe::bytelevel::for_each_token(line, &table, &mut buf, emit);
             } else {
-                gigatrain::split::for_each_word(line, emit);
+                gigabpe::split::for_each_word(line, emit);
             }
             writeln!(out).unwrap();
         }
@@ -46,13 +46,13 @@ fn main() {
     }
 
     if bytelevel {
-        let table = gigatrain::bytelevel::byte_to_char();
+        let table = gigabpe::bytelevel::byte_to_char();
         let mut buf = String::new();
-        gigatrain::bytelevel::for_each_token(&text, &table, &mut buf, |t| {
+        gigabpe::bytelevel::for_each_token(&text, &table, &mut buf, |t| {
             writeln!(out, "{t}").unwrap();
         });
     } else {
-        gigatrain::split::for_each_word(&text, |w| {
+        gigabpe::split::for_each_word(&text, |w| {
             writeln!(out, "{w}").unwrap();
         });
     }

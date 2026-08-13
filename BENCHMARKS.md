@@ -34,9 +34,9 @@ single-giant-pretoken corpora.
 
 `modal run scripts/modal_benchmark.py::parity --size-mb 13000`. 12.9 GB FineWeb,
 vocab 32000, 16 cores (deliberately not 64 — HF degrades with core count, so
-this is the least favourable setting for gigatrain).
+this is the least favourable setting for gigabpe).
 
-| pretokenizer | merges | gigatrain | HF | identical |
+| pretokenizer | merges | gigabpe | HF | identical |
 |---|---|---|---|---|
 | ByteLevel | 31,790 | **38.0 s** | 257.1 s | yes |
 | whitespace | 16,969 | **107.8 s** | 496.9 s | yes |
@@ -55,14 +55,14 @@ CLAUDE.md milestone 5 targets *"20 GB trains without OOM on a normal machine."*
 
 | trainer | pretokenizer | wall | peak RSS | outcome |
 |---|---|---|---|---|
-| **gigatrain** | ByteLevel | **47.3 s** | **2.9 GB** | ok |
-| **gigatrain** | whitespace | **137.4 s** | 7.2 GB | ok |
+| **gigabpe** | ByteLevel | **47.3 s** | **2.9 GB** | ok |
+| **gigabpe** | whitespace | **137.4 s** | 7.2 GB | ok |
 | SentencePiece v0.2.2 | its own | 158.3 s | 27.2 GB | **SIGSEGV** |
 | HuggingFace 0.22.2 | whitespace | 730.9 s | 36.3 GB | ok |
 | rustbpe | GPT-4 regex | 1216.7 s | 5.8 GB | ok |
 
 Like-for-like whitespace: **5.3x on 5.0x less memory.** HF needs **1.9x the
-corpus size in RAM**, which is the mechanism behind #1681; gigatrain needs
+corpus size in RAM**, which is the mechanism behind #1681; gigabpe needs
 0.15x. SentencePiece reproduced its 12.9 GB segfault on a different machine and
 corpus size, so that crash tracks input scale.
 
@@ -73,15 +73,15 @@ text each, not 4–5). Fixed for future runs; reported at its true size.
 
 **The only mutually comparable multi-trainer table here**, and now complete —
 all seven trainers that exist. Every other table was assembled from separate
-sessions, which is why gigatrain's own 1 GB figure appears three different ways
+sessions, which is why gigabpe's own 1 GB figure appears three different ways
 in this repo's history. One container, one page cache, median of 3 repeats,
 16-core Linux, vocab 32000.
 
 **1 GB FineWeb, ByteLevel**
 
-| trainer | pretokenizer | wall | peak RSS | vs gigatrain | parity |
+| trainer | pretokenizer | wall | peak RSS | vs gigabpe | parity |
 |---|---|---|---|---|---|
-| **gigatrain** | ByteLevel | **6.7 s** ±3% | **537 MB** | — | — |
+| **gigabpe** | ByteLevel | **6.7 s** ±3% | **537 MB** | — | — |
 | gigatoken | its own | 25.8 s ±1% | 1.1 GB | 3.9x | — |
 | YouTokenToMe | its own | 26.3 s ±2% | **6.4 GB** | 3.9x | — |
 | HuggingFace | ByteLevel | 46.9 s ±2% | 1.7 GB | 7.0x | **identical (31,798)** |
@@ -89,15 +89,15 @@ in this repo's history. One container, one page cache, median of 3 repeats,
 | rustbpe | GPT-4 regex | 78.0 s ±4% | 1.1 GB | 11.6x | — |
 | SentencePiece | its own | 108.1 s ±2% | 3.6 GB | 16.1x | — |
 
-**1 GB whitespace** (like-for-like, verified identical output): gigatrain
+**1 GB whitespace** (like-for-like, verified identical output): gigabpe
 **20.1 s** ±8% / 1.1 GB against HF **101.1 s** ±4% / 4.3 GB — **5.0x on 3.9x
 less memory**, 25,169 merges identical.
 
 **100 MB FineWeb, ByteLevel**
 
-| trainer | wall | peak RSS | vs gigatrain | parity |
+| trainer | wall | peak RSS | vs gigabpe | parity |
 |---|---|---|---|---|
-| **gigatrain** | **1.5 s** ±2% | **162 MB** | — | — |
+| **gigabpe** | **1.5 s** ±2% | **162 MB** | — | — |
 | YouTokenToMe | 6.9 s ±2% | 1.6 GB | 4.6x | — |
 | gigatoken | 7.6 s ±6% | 243 MB | 5.1x | — |
 | ffbpe | 8.1 s ±5% | 393 MB | 5.4x | — |
@@ -105,10 +105,10 @@ less memory**, 25,169 merges identical.
 | SentencePiece | 13.8 s ±6% | 548 MB | 9.2x | — |
 | HuggingFace | 16.1 s ±1% | 546 MB | 10.7x | **identical (31,801)** |
 
-100 MB whitespace: gigatrain 3.3 s / 260 MB vs HF 26.8 s / 1.0 GB (8.1x),
+100 MB whitespace: gigabpe 3.3 s / 260 MB vs HF 26.8 s / 1.0 GB (8.1x),
 29,299 merges identical.
 
-**gigatrain is fastest of all seven at both sizes.** Three caveats belong with
+**gigabpe is fastest of all seven at both sizes.** Three caveats belong with
 that: only the HuggingFace rows have verified identical output (the other five
 apply their own pretokenization); rustbpe is ~15% *faster* on single-giant-
 pretoken corpora (see [Degenerate corpora](#degenerate-corpora)); and this is
@@ -116,7 +116,7 @@ one allocation, so the absolute times carry the 20–28% between-allocation
 spread while the ratios do not.
 
 **YouTokenToMe's memory is the outlier nobody reports.** 6.4 GB for a 1 GB
-corpus — 12x gigatrain's, and the highest of any trainer here — while being
+corpus — 12x gigabpe's, and the highest of any trainer here — while being
 second-fastest. No published trainer benchmark reports memory, so this cost is
 invisible in the literature.
 
@@ -137,7 +137,7 @@ threads). Their benchmark holds up better than that criticism implied.
 One box, one binary, one corpus, varying only `RAYON_NUM_THREADS`. 64-core
 x86-64 Linux, vocab 32000, median of 3.
 
-| threads | HF @100 MB | HF @1 GB | gigatrain @1 GB |
+| threads | HF @100 MB | HF @1 GB | gigabpe @1 GB |
 |---|---|---|---|
 | 1 | 23.8 s | 134.6 s | 22.2 s |
 | 4 | **15.4 s** | 79.9 s | 16.5 s |
@@ -167,7 +167,7 @@ and `MODAL_TASK_ID` (8 distinct values, ~1 s uptime each).
 
 | | within-run (3 repeats) | across 8 allocations |
 |---|---|---|
-| gigatrain | ±2% | **20%** (1.19 → 1.46 s) |
+| gigabpe | ±2% | **20%** (1.19 → 1.46 s) |
 | HuggingFace | ±2% | **28%** (16.82 → 21.99 s) |
 
 Repeats inside one allocation measure scheduler jitter, not reproducibility.
@@ -180,7 +180,7 @@ Real corpora via `scripts/real_corpora.py` (UCSC hg38 chr21, npm registry
 packuments, cdnjs bundles, Project Gutenberg), synthetic via
 `scripts/degenerate_corpora.py`.
 
-| corpus | gigatrain (bl) | HF (bl) | parity |
+| corpus | gigabpe (bl) | HF (bl) | parity |
 |---|---|---|---|
 | dna_real (FASTA) | **13.7 s / 957 MB** | 73.9 s / 3.5 GB | identical |
 | dna_real_oneline | **267 s / 800 MB** | **TIMEOUT** | — |
@@ -190,9 +190,9 @@ packuments, cdnjs bundles, Project Gutenberg), synthetic via
 | text_real_cjk | **0.9 s / 107 MB** | 21.9 s / 419 MB | identical |
 | text_real_cr_only | **2.4 s / 75 MB** | 95.9 s / 4.1 GB | identical |
 
-Across 20 configurations (10 corpora × 2 modes) **gigatrain completed all 20;
+Across 20 configurations (10 corpora × 2 modes) **gigabpe completed all 20;
 HuggingFace completed 15**, and every one of the 15 was byte-identical. rustbpe
-is ~15% faster than gigatrain on the two single-giant-pretoken corpora
+is ~15% faster than gigabpe on the two single-giant-pretoken corpora
 (235.7 s vs 266.8 s). SentencePiece failed 5 of 7 in an earlier pass — four
 refusals ("Vocabulary size too high... set it to a value <= 28") and one
 SIGABRT.
@@ -224,7 +224,7 @@ but unimplemented, because it touches the parity-critical path.
 
 ## Where the memory goes
 
-Profiled with `GIGATRAIN_STATS=1`. CLAUDE.md predicted `pair_where` would be
+Profiled with `GIGABPE_STATS=1`. CLAUDE.md predicted `pair_where` would be
 the hazard. It was not: at 1 GB there are 63k distinct pairs (~1 MB of counts)
 and 189 MB of position lists. **Phase 1 was the hog** — per-worker
 `HashMap<String, u64>` accumulators held 1.7 GB of a 2.26 GB peak, because

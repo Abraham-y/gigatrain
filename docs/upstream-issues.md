@@ -30,7 +30,7 @@ corpus: '##c ##cac# #ab c# #### accc#a#a#b a cb'
   --special a --special '<unk>'
 ```
 
-The filed reproducer is **pure HuggingFace** — it needs no gigatrain. It
+The filed reproducer is **pure HuggingFace** — it needs no gigabpe. It
 trains, then replays the emitted merge list against the corpus and reports the
 true occurrence count of each pair at the moment it is merged; a count of 0
 means the merge was unreachable. On 0.23.1, 4 of 40 runs contain one (training
@@ -47,7 +47,7 @@ since gone negative, sign-extended to `u64::MAX`, and `top.count < 1` cannot
 catch it. Widening the counter to `i64` (as #2058 proposes for the positive
 direction) would not fix this; any negative value sign-extends the same way.
 
-gigatrain reproduces this deliberately — `live as u64` on an `i64` sign-extends
+gigabpe reproduces this deliberately — `live as u64` on an `i64` sign-extends
 identically — because parity means matching the bugs too.
 
 ## 2. DO NOT FILE — comment on the existing PR instead
@@ -69,9 +69,9 @@ The diagnosis is still correct against v0.23.1: `tokenize_words` still iterates
   `continuing_subword_prefix("##")` in its default builder, so **WordPiece
   training is non-reproducible by default**, and nobody can verify a released
   tokenizer was trained from the data claimed.
-- A note that #2066 sorts *word counts* while gigatrain sorts the *decorated
+- A note that #2066 sorts *word counts* while gigabpe sorts the *decorated
   token strings* — both deterministic, but not the same determinism, so a
-  merged #2066 still would not agree merge-for-merge with gigatrain's decorated
+  merged #2066 still would not agree merge-for-merge with gigabpe's decorated
   modes. Worth asking which order they intend to freeze.
 
 **Reproducer for the comment:**

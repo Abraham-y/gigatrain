@@ -1,4 +1,4 @@
-# gigatrain
+# gigabpe
 
 Fast BPE tokenizer training with byte-exact HuggingFace `tokenizers` parity.
 
@@ -11,7 +11,7 @@ separately been diffed against HuggingFace at 100 MB, 1 GB and 12.9 GB of
 FineWeb in manual runs.
 
 ```bash
-pip install gigatrain
+pip install gigabpe
 ```
 
 Wheels are published for CPython 3.9–3.14 on Linux (x86_64, aarch64), macOS
@@ -19,20 +19,20 @@ Wheels are published for CPython 3.9–3.14 on Linux (x86_64, aarch64), macOS
 which needs a Rust toolchain.
 
 ```python
-import gigatrain
+import gigabpe
 
 # Write a tokenizer.json that tokenizers.Tokenizer.from_file() can load.
-gigatrain.train_tokenizer(
+gigabpe.train_tokenizer(
     ["corpus.txt"], vocab_size=32000, output="tokenizer.json",
     pretokenizer="bytelevel", special_tokens=["<|endoftext|>"],
 )
 
 # Or get the vocab and merges directly.
-vocab, merges = gigatrain.train_bpe(["corpus.txt"], vocab_size=32000)
+vocab, merges = gigabpe.train_bpe(["corpus.txt"], vocab_size=32000)
 ```
 
 Options: `special_tokens`, `min_frequency`, `max_token_length`,
 `limit_alphabet`, `pretokenizer` (`"whitespace"` or `"bytelevel"`), `threads`.
 
 Full documentation, benchmarks, and the parity specification:
-https://github.com/Abraham-y/gigatrain
+https://github.com/Abraham-y/gigabpe
