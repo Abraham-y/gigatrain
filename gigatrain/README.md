@@ -10,6 +10,14 @@ corpora up to 4.9 MB across seven configurations, and merge lists have
 separately been diffed against HuggingFace at 100 MB, 1 GB and 12.9 GB of
 FineWeb in manual runs.
 
+```bash
+pip install gigatrain
+```
+
+Wheels are published for CPython 3.9–3.14 on Linux (x86_64, aarch64), macOS
+(arm64, x86_64) and Windows (x64). Any other platform builds from the sdist,
+which needs a Rust toolchain.
+
 ```python
 import gigatrain
 

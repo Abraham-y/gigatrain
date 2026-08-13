@@ -34,17 +34,31 @@ jobs:
           - { runner: windows-latest, target: x64 }
     steps:
       - uses: actions/checkout@v4
+      # Install every target interpreter rather than relying on whatever the
+      # runner image happens to cache. macOS builds silently covered only the
+      # versions already in its tool cache, so the wheel set tracked the image
+      # instead of the list below. Linux builds inside a manylinux container
+      # and uses that container's interpreters; this is a no-op there.
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: |
+            3.9
+            3.10
+            3.11
+            3.12
+            3.13
+            3.14
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           # abi3 is not enabled, so build one wheel per supported interpreter.
+          # The list must cover everything `requires-python` in pyproject.toml
+          # admits, or pip resolves the package and then falls back to a source
+          # build that needs a Rust toolchain.
           args: >-
             --release --features python
             --manifest-path gigatrain/Cargo.toml
-            --interpreter 3.9 3.10 3.11 3.12 3.13
+            --interpreter 3.9 3.10 3.11 3.12 3.13 3.14
           manylinux: auto
       - uses: actions/upload-artifact@v4
         with:

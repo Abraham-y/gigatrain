@@ -7,7 +7,7 @@ name = "gigatrain"
 description = "Fast BPE tokenizer trainer with byte-exact HuggingFace tokenizers parity"
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 keywords = ["bpe", "tokenizer", "nlp", "training", "tokenization"]
 classifiers = [
     "Programming Language :: Rust",
